@@ -1,60 +1,52 @@
-<!doctype html>
-<html lang="de">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-  <title>NÖ • 14-Tage-Niederschlag</title>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-  <style>
-    html,body,#map{height:100%;margin:0}
-    .ui{position:absolute;z-index:1000;background:#fff;padding:6px 10px;border-radius:6px;box-shadow:0 1px 4px rgba(0,0,0,.3);font-family:system-ui}
-    #loc{top:12px;left:12px} #op{top:12px;right:12px}
-    label{font-size:12px}
-  </style>
-</head>
-<body>
-  <div id="map"></div>
-  <button class="ui" id="loc">📍 Meine Position</button>
-  <div class="ui" id="op"><label>Overlay <input type="range" id="opacity" min="30" max="100" value="85"> <span id="ovv">85%</span></label></div>
+<script>
+let watchId = null, marker = null;
 
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
-  <script>
-  (function(){
-    // <<< HIER anpassen
-    const PNG_URL = "noe_rr_sum_2025-08-14_bis_2025-08-27.png";
-    const bounds = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
-    // >>>>>
+function startWatch() {
+  if (watchId !== null) return;
+  watchId = navigator.geolocation.watchPosition(pos => {
+    const { latitude, longitude } = pos.coords;
+    if (!marker) {
+      marker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
+    }
+    marker.setLatLng([latitude, longitude]);
+  }, err => {
+    if (err.code === err.PERMISSION_DENIED) {
+      alert("Standort verweigert.\nSafari: aA → Website-Einstellungen → Standort: Erlauben\noder: Einstellungen → Ortungsdienste → Safari-Websites.");
+    } else {
+      alert("GPS-Fehler: " + err.message);
+    }
+  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 });
+}
 
-    const map = L.map('map', { zoomControl: true });
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
-
-    const imgBounds = L.latLngBounds([bounds.south,bounds.west],[bounds.north,bounds.east]);
-    const overlay = L.imageOverlay(PNG_URL, imgBounds, {opacity:0.85}).addTo(map);
-    map.fitBounds(imgBounds.pad(0.1));
-
-    // Opacity UI
-    const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
-    const up = ()=>{ const v = Number(op.value)/100; overlay.setOpacity(v); ovv.textContent = `${op.value}%`; };
-    op.addEventListener('input', up); up();
-
-    // GPS (funktioniert auf Pages/HTTPS, nach Berechtigung)
-    const btn = document.getElementById('loc'); let watchId=null, marker=null;
-    btn.addEventListener('click', ()=>{
-      if(!navigator.geolocation){ alert("Geolocation nicht verfügbar."); return; }
-      if(watchId===null){
-        watchId = navigator.geolocation.watchPosition(p=>{
-          const {latitude, longitude} = p.coords;
-          if(!marker){ marker = L.marker([latitude,longitude]).addTo(map).bindPopup("Du bist hier"); }
-          marker.setLatLng([latitude,longitude]);
-        }, e=>alert("GPS-Fehler: "+e.message), {enableHighAccuracy:true,maximumAge:10000,timeout:15000});
-        btn.textContent = "📍 GPS aktiv";
-      } else {
-        navigator.geolocation.clearWatch(watchId); watchId=null;
-        if(marker){ map.removeLayer(marker); marker=null; }
-        btn.textContent = "📍 Meine Position";
-      }
+async function requestOnceThenWatch() {
+  try {
+    // 1) Einmalig prompten (iOS zeigt hier zuverlässig den Dialog)
+    await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(
+        () => resolve(), err => reject(err),
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      );
     });
-  })();
-  </script>
-</body>
-</html>
+    // 2) Danach dauerhaft verfolgen
+    startWatch();
+  } catch (err) {
+    if (err && err.code === err.PERMISSION_DENIED) {
+      alert("Standort ist blockiert.\nBitte in iOS freigeben (siehe Hinweise).");
+    } else {
+      alert("GPS-Fehler: " + (err?.message || err));
+    }
+  }
+}
+
+document.getElementById('loc').addEventListener('click', () => {
+  if (watchId === null) {
+    requestOnceThenWatch();
+    document.getElementById('loc').textContent = "📍 GPS aktiv";
+  } else {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+    if (marker) { map.removeLayer(marker); marker = null; }
+    document.getElementById('loc').textContent = "📍 Meine Position";
+  }
+});
+</script>
