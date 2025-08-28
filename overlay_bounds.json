@@ -1,0 +1,10 @@
+# nach dem Plotten/before exit – Bounds als JSON sichern
+import json
+from shapely.geometry import box
+
+# extent vom Plot (west, east, south, north)
+# -> in deinem Script: left/right/bottom/top waren schon berechnet
+bounds = {"south": float(bottom), "west": float(left), "north": float(top), "east": float(right)}
+with open(OUT_DIR / "overlay_bounds.json", "w", encoding="utf-8") as f:
+    json.dump(bounds, f, ensure_ascii=False, indent=2)
+print("Bounds gespeichert:", bounds)
