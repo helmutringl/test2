@@ -322,7 +322,7 @@ function bboxFromGeom(geom){
 
 /* ======== Canvas-Renderer (Kacheln, Perzentile) ======== */
 function renderToCanvas(cells, bounds){
-  var PX_W = 1536; // ggf. 2048/3072 für noch glatter
+  var PX_W = 2048; // ggf. 2048/3072 für noch glatter
   var widthDeg  = bounds.east - bounds.west;
   var heightDeg = bounds.north - bounds.south;
   var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
