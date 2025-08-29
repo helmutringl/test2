@@ -1,52 +1,132 @@
-<script>
-let watchId = null, marker = null;
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+  <title>NÖ • 14-Tage-Niederschlag</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+  <style>
+    html,body,#map{height:100%;margin:0}
+    .ui{position:absolute;z-index:1000;background:#fff;padding:6px 10px;border-radius:8px;
+        box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,-apple-system,Segoe UI,Roboto}
+    #loc{top:12px;left:12px}
+    #op{top:12px;right:12px}
+    #reset{top:58px;left:12px}
+    label{font-size:12px}
+    #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:1001;
+           background:#111;color:#fff;padding:8px 12px;border-radius:8px;opacity:.92;display:none}
+  </style>
+</head>
+<body>
+  <div id="map"></div>
 
-function startWatch() {
-  if (watchId !== null) return;
-  watchId = navigator.geolocation.watchPosition(pos => {
-    const { latitude, longitude } = pos.coords;
-    if (!marker) {
-      marker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
-    }
-    marker.setLatLng([latitude, longitude]);
-  }, err => {
-    if (err.code === err.PERMISSION_DENIED) {
-      alert("Standort verweigert.\nSafari: aA → Website-Einstellungen → Standort: Erlauben\noder: Einstellungen → Ortungsdienste → Safari-Websites.");
-    } else {
-      alert("GPS-Fehler: " + err.message);
-    }
-  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 });
-}
+  <button class="ui" id="loc">📍 Meine Position</button>
+  <button class="ui" id="reset">↺ Ansicht</button>
+  <div class="ui" id="op">
+    <label>Overlay <input type="range" id="opacity" min="30" max="100" value="85"> <span id="ovv">85%</span></label>
+  </div>
+  <div id="toast"></div>
 
-async function requestOnceThenWatch() {
-  try {
-    // 1) Einmalig prompten (iOS zeigt hier zuverlässig den Dialog)
-    await new Promise((resolve, reject) => {
-      navigator.geolocation.getCurrentPosition(
-        () => resolve(), err => reject(err),
-        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-      );
-    });
-    // 2) Danach dauerhaft verfolgen
-    startWatch();
-  } catch (err) {
-    if (err && err.code === err.PERMISSION_DENIED) {
-      alert("Standort ist blockiert.\nBitte in iOS freigeben (siehe Hinweise).");
-    } else {
-      alert("GPS-Fehler: " + (err?.message || err));
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <script>
+  // ======= <<< HIER ANPASSEN >>> ===========================================
+  // PNG-Dateiname exakt wie im Repo (gleiches Verzeichnis wie index.html)
+  const PNG_URL = "noe_rr_sum_2025-08-14_bis_2025-08-27.png";
+  // Bounds aus deinem Python-Export (south/west/north/east)
+  const BOUNDS = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
+  // ========================================================================
+
+  const toast = (msg) => {
+    const el = document.getElementById('toast');
+    el.textContent = msg; el.style.display = 'block';
+    clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 3500);
+  };
+
+  // Karte + Basemap
+  const map = L.map('map', { zoomControl: true });
+  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+    maxZoom: 19, attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  // Overlay
+  const imgBounds = L.latLngBounds([BOUNDS.south,BOUNDS.west],[BOUNDS.north,BOUNDS.east]);
+  const overlay = L.imageOverlay(PNG_URL, imgBounds, { opacity: 0.85, crossOrigin: '' }).addTo(map);
+  overlay.on('load', () => toast('Overlay geladen'));
+  overlay.on('error', () => toast('Overlay nicht gefunden – Dateiname/Ort prüfen'));
+  map.fitBounds(imgBounds.pad(0.1));
+
+  // Opacity UI
+  const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
+  const setOp = () => { const v = Number(op.value)/100; overlay.setOpacity(v); ovv.textContent = op.value+'%'; };
+  op.addEventListener('input', setOp); setOp();
+
+  // Ansicht zurücksetzen
+  document.getElementById('reset').addEventListener('click', ()=> map.fitBounds(imgBounds.pad(0.1)));
+
+  // Geolocation: erst einmalig getCurrentPosition (Prompt), dann watchPosition
+  let watchId = null, gpsMarker = null;
+  function startWatch(){
+    if (watchId !== null) return;
+    watchId = navigator.geolocation.watchPosition(pos => {
+      const { latitude, longitude } = pos.coords;
+      if (!gpsMarker) {
+        gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
+      }
+      gpsMarker.setLatLng([latitude, longitude]);
+    }, err => {
+      if (err.code === err.PERMISSION_DENIED) {
+        toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+      } else {
+        toast("GPS-Fehler: " + err.message);
+      }
+    }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+  }
+
+  async function requestOnceThenWatch(){
+    // iOS zeigt den Prompt zuverlässiger bei getCurrentPosition
+    try {
+      await new Promise((res, rej) => {
+        navigator.geolocation.getCurrentPosition(() => res(), e => rej(e),
+          { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
+      });
+      startWatch();
+      document.getElementById('loc').textContent = "📍 GPS aktiv";
+      toast("GPS aktiv");
+    } catch (e) {
+      if (e && e.code === e.PERMISSION_DENIED) {
+        toast("Standort blockiert. In iOS freigeben (Ortungsdienste/Safari-Websites).");
+      } else {
+        toast("GPS-Fehler: " + (e?.message || e));
+      }
     }
   }
-}
 
-document.getElementById('loc').addEventListener('click', () => {
-  if (watchId === null) {
-    requestOnceThenWatch();
-    document.getElementById('loc').textContent = "📍 GPS aktiv";
-  } else {
-    navigator.geolocation.clearWatch(watchId);
-    watchId = null;
-    if (marker) { map.removeLayer(marker); marker = null; }
-    document.getElementById('loc').textContent = "📍 Meine Position";
-  }
-});
-</script>
+  document.getElementById('loc').addEventListener('click', () => {
+    if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
+    if (watchId === null) {
+      requestOnceThenWatch();
+    } else {
+      navigator.geolocation.clearWatch(watchId);
+      watchId = null;
+      if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
+      document.getElementById('loc').textContent = "📍 Meine Position";
+      toast("GPS aus");
+    }
+  });
+
+  // Manuelle Positionshilfe: Tippen setzt verschiebbaren Marker (falls GPS abgelehnt)
+  let manual = null;
+  map.on('click', (e) => {
+    const { lat, lng } = e.latlng;
+    if (!manual) {
+      manual = L.marker([lat, lng], { draggable: true }).addTo(map).bindPopup("Manuell gesetzt");
+    } else {
+      manual.setLatLng([lat, lng]);
+    }
+  });
+
+  // Hard-Refresh verhindern, wenn Cache Ärger macht
+  // (Beim Testen ggf. URL mit ?v=2 aufrufen)
+  </script>
+</body>
+</html>
