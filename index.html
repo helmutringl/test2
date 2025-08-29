@@ -135,100 +135,111 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script>
 /* ======== Konfig ======== */
-const DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
-const PARAM = "RR";
+var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
+var PARAM = "RR";
 
 /* ======== UI & Map ======== */
-const toast = (msg) => { const el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
-                         clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 2200); };
+function toast(msg){ var el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
+                     clearTimeout(el._t); el._t = setTimeout(function(){ el.style.display='none'; }, 2200); }
 
-const map = L.map('map', { zoomControl: true });
+var map = L.map('map', { zoomControl: true });
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
 
-const fab = document.getElementById('fab');
-const drawer = document.getElementById('drawer');
-fab.addEventListener('click', () => {
-  const open = !drawer.classList.contains('open');
+var fab = document.getElementById('fab');
+var drawer = document.getElementById('drawer');
+fab.addEventListener('click', function(){
+  var open = !drawer.classList.contains('open');
   drawer.classList.toggle('open', open);
   drawer.setAttribute('aria-hidden', String(!open));
 });
 
 /* ======== Datum default: letzte 14 Tage ======== */
-const startEl = document.getElementById('start');
-const endEl = document.getElementById('end');
+var startEl = document.getElementById('start');
+var endEl = document.getElementById('end');
 (function setDefaultDates(){
-  const today = new Date();
-  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate()-1); // gestern
-  const start = new Date(end); start.setDate(end.getDate()-13);
-  const fmt = d => d.toISOString().slice(0,10);
+  var today = new Date();
+  var end = new Date(today.getFullYear(), today.getMonth(), today.getDate()-1); // gestern
+  var start = new Date(end); start.setDate(end.getDate()-13);
+  function fmt(d){ return d.toISOString().slice(0,10); }
   startEl.value = fmt(start);
   endEl.value = fmt(end);
 })();
 
 /* ======== Renderer-States ======== */
-let overlay = null;      // Leaflet imageOverlay
-let rect = null;         // Debug-bounds rectangle
-let baseBounds = null;   // Leaflet LatLngBounds des (unge-shifteten) Overlays
+var overlay = null;      // Leaflet imageOverlay
+var rect = null;         // Debug-bounds rectangle
+var baseBounds = null;   // Leaflet LatLngBounds
+var baseBoundsObj = null;
 
 /* ======== Progress-Bar ======== */
-const bar = document.getElementById('bar');
-const pct = document.getElementById('pct');
-function progress(frac){ bar.style.width = `${Math.round(frac*100)}%`; pct.textContent = `${Math.round(frac*100)}%`; }
+var bar = document.getElementById('bar');
+var pct = document.getElementById('pct');
+function progress(frac){ var p = Math.max(0, Math.min(1, frac||0)); bar.style.width = (Math.round(p*100))+'%'; pct.textContent = (Math.round(p*100))+'%'; }
 
-/* ======== Farbskala (viridis-ähnlich über Stops interpoliert) ======== */
-const STOPS = [
-  {t:0.00, c:[68,1,84]},   // dunkelviolett
+/* ======== Farbskala ======== */
+var STOPS = [
+  {t:0.00, c:[68,1,84]},
   {t:0.20, c:[71,44,122]},
   {t:0.40, c:[59,81,139]},
   {t:0.60, c:[44,113,142]},
   {t:0.80, c:[33,144,141]},
-  {t:1.00, c:[253,231,37]} // gelb
+  {t:1.00, c:[253,231,37]}
 ];
 function lerp(a,b,t){ return a + (b-a)*t; }
 function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)), Math.round(lerp(c1[1],c2[1],t)), Math.round(lerp(c1[2],c2[2],t))]; }
 function colorFor(v, vmin, vmax){
   if (!isFinite(v)) return [0,0,0,0];
-  const t = Math.max(0, Math.min(1, (v - vmin) / (vmax - vmin + 1e-9)));
-  let i = 0; while (i < STOPS.length-1 && t > STOPS[i+1].t) i++;
-  const t0 = STOPS[i].t, t1 = STOPS[i+1].t;
-  const local = (t - t0) / (t1 - t0);
-  const rgb = lerpColor(STOPS[i].c, STOPS[i+1].c, local);
+  var t = Math.max(0, Math.min(1, (v - vmin) / (vmax - vmin + 1e-9)));
+  var i = 0; while (i < STOPS.length-1 && t > STOPS[i+1].t) i++;
+  var t0 = STOPS[i].t, t1 = STOPS[i+1].t;
+  var local = (t - t0) / (t1 - t0);
+  var rgb = lerpColor(STOPS[i].c, STOPS[i+1].c, local);
   return [rgb[0], rgb[1], rgb[2], 255];
 }
 
 /* ======== FeatureCollection laden & summieren ======== */
-async function loadFeatureCollection(start, end, bbox){
-  const params = new URLSearchParams({
-    parameters: PARAM,
-    start, end,
-    bbox: bbox.join(',')
-  });
-  const r = await fetch(`${DATASET_URL}?${params.toString()}`, { headers: { "Accept":"application/json" } });
-  if (!r.ok) throw new Error(`HTTP ${r.status} ${await r.text()}`);
-  const fc = await r.json();
-  if (fc.type !== "FeatureCollection") throw new Error("Keine FeatureCollection erhalten.");
-  return fc;
+function loadFeatureCollection(start, end, bbox){
+  var params = new URLSearchParams({ parameters: PARAM, start: start, end: end, bbox: bbox.join(',') });
+  return fetch(DATASET_URL + "?" + params.toString(), { headers: { "Accept":"application/json" } })
+    .then(function(r){
+      if (!r.ok) return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t); });
+      return r.json();
+    }).then(function(fc){
+      if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten.");
+      return fc;
+    });
 }
 
 function extractValues(props, nt){
-  const prefer = [PARAM, PARAM.toLowerCase(), "RRsum","rr_sum","value","values"];
-  for (const k of prefer){
-    const v = props[k];
-    if (Array.isArray(v) && v.some(x=>typeof x === 'number')) return v.map(Number);
+  var prefer = [PARAM, String(PARAM).toLowerCase(), "RRsum","rr_sum","value","values"];
+  for (var i=0;i<prefer.length;i++){
+    var v = props[prefer[i]];
+    if (Array.isArray(v) && v.length>0) {
+      var out = []; for (var j=0;j<v.length;j++){ var x=v[j]; if (typeof x==='number' && isFinite(x)) out.push(Number(x)); }
+      if (out.length>0) return out;
+    }
   }
-  // arrays mit matching Länge
-  for (const [k,v] of Object.entries(props)){
-    if (Array.isArray(v) && v.length === nt && v.some(x=>typeof x === 'number')) return v.map(Number);
+  var keys = Object.keys(props);
+  for (var k=0;k<keys.length;k++){
+    var v2 = props[keys[k]];
+    if (Array.isArray(v2) && v2.length===nt) {
+      var out2 = []; for (var j2=0;j2<v2.length;j2++){ var y=v2[j2]; if (typeof y==='number' && isFinite(y)) out2.push(Number(y)); }
+      if (out2.length>0) return out2;
+    }
   }
-  // tiefensuche
-  let found = null;
+  var found = null;
   function scan(o){
     if (found) return;
     if (Array.isArray(o)){
-      if (o.length>0 && o.some(x=>typeof x==='number')) { found = o.map(Number); return; }
-      o.forEach(scan);
+      if (o.length>0){
+        var num = false;
+        for (var q=0;q<o.length;q++){ if (typeof o[q]==='number' && isFinite(o[q])) { num=true; break; } }
+        if (num){ found = o.map(function(z){ return Number(z); }); return; }
+      }
+      for (var q2=0;q2<o.length;q2++) scan(o[q2]);
     } else if (o && typeof o === 'object'){
-      Object.values(o).forEach(scan);
+      var ks = Object.keys(o);
+      for (var m=0;m<ks.length;m++) scan(o[ks[m]]);
     }
   }
   scan(props);
@@ -236,57 +247,60 @@ function extractValues(props, nt){
 }
 
 function bboxFromGeom(geom){
-  // GeoJSON Polygon/MultiPolygon
-  const coords = geom.coordinates;
-  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
-  function loop(arr){
-    for (const p of arr){
-      if (typeof p[0] === 'number'){
-        const x=p[0], y=p[1];
-        if (x<minx) minx=x; if (x>maxx) maxx=x;
-        if (y<miny) miny=y; if (y>maxy) maxy=y;
-      } else loop(p);
+  var coords = geom && geom.coordinates;
+  var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  function walk(node){
+    if (!node) return;
+    if (Array.isArray(node)) {
+      if (node.length>=2 && typeof node[0]==='number' && typeof node[1]==='number'){
+        var x=node[0], y=node[1];
+        if (x<minx) minx=x; if (x>maxx) maxx=x; if (y<miny) miny=y; if (y>maxy) maxy=y;
+      } else {
+        for (var i=0;i<node.length;i++) walk(node[i]);
+      }
     }
   }
-  loop(coords);
+  walk(coords);
   return [minx,miny,maxx,maxy];
 }
 
 /* ======== Canvas-Rasterizer ======== */
 function renderToCanvas(cells, bounds){
-  // Bildgröße – Breite fix, Höhe nach Aspect
-  const PX_W = 1536;
-  const widthDeg  = bounds.east - bounds.west;
-  const heightDeg = bounds.north - bounds.south;
-  const PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
+  var PX_W = 1536;
+  var widthDeg  = bounds.east - bounds.west;
+  var heightDeg = bounds.north - bounds.south;
+  var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
 
-  const cvs = document.createElement('canvas');
+  var cvs = document.createElement('canvas');
   cvs.width = PX_W; cvs.height = PX_H;
-  const ctx = cvs.getContext('2d', { willReadFrequently: false });
-  const img = ctx.createImageData(PX_W, PX_H);
-  const data = img.data;
+  var ctx = cvs.getContext('2d', { willReadFrequently: false });
+  var img = ctx.createImageData(PX_W, PX_H);
+  var data = img.data;
 
-  const lonPerPx = widthDeg / PX_W;
-  const latPerPx = heightDeg / PX_H;
+  var lonPerPx = widthDeg / PX_W;
+  var latPerPx = heightDeg / PX_H;
 
-  // Wertebereich
-  let vmin = Infinity, vmax = -Infinity;
-  for (const c of cells){ if (isFinite(c.v)) { if (c.v<vmin) vmin=c.v; if (c.v>vmax) vmax=c.v; } }
+  var vmin = Infinity, vmax = -Infinity;
+  for (var i=0;i<cells.length;i++){
+    var vi = cells[i].v;
+    if (isFinite(vi)){ if (vi<vmin) vmin=vi; if (vi>vmax) vmax=vi; }
+  }
   if (!isFinite(vmin) || !isFinite(vmax)) { vmin = 0; vmax = 1; }
 
-  // Raster füllen
-  let done = 0;
-  for (const c of cells){
-    // bbox -> Pixelrechteck
-    const minx = Math.max(0, Math.floor((c.minx - bounds.west)/lonPerPx));
-    const maxx = Math.min(PX_W-1, Math.ceil ((c.maxx - bounds.west)/lonPerPx));
-    const miny = Math.max(0, Math.floor((bounds.north - c.maxy)/latPerPx));
-    const maxy = Math.min(PX_H-1, Math.ceil ((bounds.north - c.miny)/latPerPx));
+  var done = 0;
+  for (var c=0;c<cells.length;c++){
+    var cell = cells[c];
+    var minx = Math.max(0, Math.floor((cell.minx - bounds.west)/lonPerPx));
+    var maxx = Math.min(PX_W-1, Math.ceil ((cell.maxx - bounds.west)/lonPerPx));
+    var miny = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
+    var maxy = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
 
-    const [r,g,b,a] = colorFor(c.v, vmin, vmax);
-    for (let y=miny; y<=maxy; y++){
-      let idx = (y*PX_W + minx)*4;
-      for (let x=minx; x<=maxx; x++){
+    var col = colorFor(cell.v, vmin, vmax);
+    var r = col[0], g = col[1], b = col[2], a = col[3];
+
+    for (var y=miny; y<=maxy; y++){
+      var idx = (y*PX_W + minx)*4;
+      for (var x=minx; x<=maxx; x++){
         data[idx]   = r; data[idx+1] = g; data[idx+2] = b; data[idx+3] = a;
         idx += 4;
       }
@@ -301,149 +315,154 @@ function renderToCanvas(cells, bounds){
   return { canvas: cvs, width: PX_W, height: PX_H };
 }
 
-/* ======== Overlay anwenden (inkl. Justage) ======== */
-const state = {
-  shiftX: Number(localStorage.getItem('ovShiftX') ?? 0) || 0,
-  shiftY: Number(localStorage.getItem('ovShiftY') ?? 0) || 0,
-  scaleW: Number(localStorage.getItem('ovScaleW') ?? 0) || 0,
-  scaleH: Number(localStorage.getItem('ovScaleH') ?? 0) || 0,
+/* ======== Overlay-Justage ======== */
+var state = {
+  shiftX: Number(localStorage.getItem('ovShiftX') || 0) || 0,
+  shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
+  scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
+  scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
 };
-const pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
-const wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
+var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
+var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
 function updateUI(){ pxX.textContent = state.shiftX; pxY.textContent = state.shiftY; wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1); }
 
-function applyTransformOnOverlay(overlay, base){
-  if (!overlay || !overlay._image) return;
-  const B = base; const w0 = (B.east - B.west); const h0 = (B.north - B.south);
-  const cx = B.west + w0/2, cy = B.south + h0/2;
+function applyTransformOnOverlay(ov, base){
+  if (!ov || !ov._image) return;
+  var B = base; var w0 = (B.east - B.west); var h0 = (B.north - B.south);
+  var cx = B.west + w0/2, cy = B.south + h0/2;
 
-  const wdeg = w0 * (1 + state.scaleW/100);
-  const hdeg = h0 * (1 + state.scaleH/100);
+  var wdeg = w0 * (1 + state.scaleW/100);
+  var hdeg = h0 * (1 + state.scaleH/100);
 
-  const wpx = overlay._image.naturalWidth  || 0;
-  const hpx = overlay._image.naturalHeight || 0;
-  const lonPerPx = wpx ? (w0 / wpx) : 0;
-  const latPerPx = hpx ? (h0 / hpx) : 0;
+  var wpx = ov._image.naturalWidth  || 0;
+  var hpx = ov._image.naturalHeight || 0;
+  var lonPerPx = wpx ? (w0 / wpx) : 0;
+  var latPerPx = hpx ? (h0 / hpx) : 0;
 
-  const dLon = state.shiftX * lonPerPx;
-  const dLat = state.shiftY * latPerPx;
+  var dLon = state.shiftX * lonPerPx;
+  var dLat = state.shiftY * latPerPx;
 
-  const west  = (cx - wdeg/2) + dLon;
-  const east  = (cx + wdeg/2) + dLon;
-  const south = (cy - hdeg/2) + dLat;
-  const north = (cy + hdeg/2) + dLat;
+  var west  = (cx - wdeg/2) + dLon;
+  var east  = (cx + wdeg/2) + dLon;
+  var south = (cy - hdeg/2) + dLat;
+  var north = (cy + hdeg/2) + dLat;
 
-  const adj = L.latLngBounds([south, west], [north, east]);
-  overlay.setBounds(adj);
+  var adj = L.latLngBounds([south, west], [north, east]);
+  ov.setBounds(adj);
   if (rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
 }
 
-function persist(){ localStorage.setItem('ovShiftX', String(state.shiftX));
-                    localStorage.setItem('ovShiftY', String(state.shiftY));
-                    localStorage.setItem('ovScaleW', String(state.scaleW));
-                    localStorage.setItem('ovScaleH', String(state.scaleH));
-                    updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj); }
+function persist(){
+  localStorage.setItem('ovShiftX', String(state.shiftX));
+  localStorage.setItem('ovShiftY', String(state.shiftY));
+  localStorage.setItem('ovScaleW', String(state.scaleW));
+  localStorage.setItem('ovScaleH', String(state.scaleH));
+  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
+}
 
 /* ======== Render-Button ======== */
-let baseBoundsObj = null;
-document.getElementById('renderBtn').addEventListener('click', async () => {
+document.getElementById('renderBtn').addEventListener('click', function(){
+  progress(0); toast("Lade Daten …");
   try{
-    progress(0); toast("Lade Daten …");
-    const start = startEl.value; const end = endEl.value;
-    const bboxStr = document.getElementById('bbox').value.trim();
-    const parts = bboxStr.split(',').map(x => parseFloat(x));
-    if (parts.length !== 4 || parts.some(x => !isFinite(x))) { alert("BBOX-Format: south,west,north,east"); return; }
-    const [south, west, north, east] = parts;
-    baseBoundsObj = {south, west, north, east};
+    var start = startEl.value; var end = endEl.value;
+    var bboxStr = document.getElementById('bbox').value.trim();
+    var partsStr = bboxStr.split(',');
+    if (partsStr.length !== 4) { alert("BBOX-Format: south,west,north,east"); return; }
+    var parts = [];
+    for (var i=0;i<4;i++){ var p = parseFloat(partsStr[i]); if (!isFinite(p)) { alert("BBOX ungültig"); return; } parts.push(p); }
+    var south = parts[0], west = parts[1], north = parts[2], east = parts[3];
+    baseBoundsObj = {south:south, west:west, north:north, east:east};
     baseBounds = L.latLngBounds([south,west],[north,east]);
 
-    const fc = await loadFeatureCollection(start, end, parts);
-    const timestamps = fc.timestamps || [];
-    const nt = timestamps.length;
+    loadFeatureCollection(start, end, parts).then(function(fc){
+      var timestamps = fc.timestamps || [];
+      var nt = timestamps.length;
 
-    // FC -> Zellen (bbox + sum)
-    const cells = [];
-    let i=0;
-    for (const f of fc.features){
-      const geom = f.geometry; if (!geom) continue;
-      const vals = extractValues(f.properties || {}, nt);
-      if (!vals) continue;
-      const sum = vals.reduce((a,b)=> a + (isFinite(b)?b:0), 0);
-      const [minx,miny,maxx,maxy] = bboxFromGeom(geom);
-      cells.push({ v: sum, minx, miny, maxx, maxy });
-      if ((++i % 500) === 0) progress(i / fc.features.length);
-    }
+      // FC -> Zellen
+      var feats = fc.features || [];
+      var cells = [];
+      for (var i=0;i<feats.length;i++){
+        var f = feats[i];
+        var geom = f && f.geometry;
+        if (!geom) continue;
+        var props = f.properties || {};
+        var vals = extractValues(props, nt);
+        if (!vals) continue;
+        var sum = 0;
+        for (var j=0;j<vals.length;j++){ var vv = vals[j]; if (isFinite(vv)) sum += vv; }
+        var bb = bboxFromGeom(geom);
+        cells.push({ v: sum, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
+        if ((i % 500) === 0) progress(i / feats.length);
+      }
 
-    toast(`Zellen: ${cells.length}`);
-    const { canvas } = renderToCanvas(cells, baseBoundsObj);
-    const url = canvas.toDataURL("image/png");
+      toast("Zellen: " + cells.length);
+      var rr = renderToCanvas(cells, baseBoundsObj);
+      var url = rr.canvas.toDataURL("image/png");
 
-    // altes Overlay löschen
-    if (overlay) { try{ map.removeLayer(overlay); }catch{} }
-    overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
-    overlay.on('load', () => { applyTransformOnOverlay(overlay, baseBoundsObj); });
-    map.fitBounds(baseBounds.pad(0.1));
+      if (overlay) { try{ map.removeLayer(overlay); }catch(e){} }
+      overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
+      overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); });
+      map.fitBounds(baseBounds.pad(0.1));
+    }).catch(function(err){
+      console.error(err);
+      alert("Fehler beim Laden/Rendern: " + (err && err.message ? err.message : err));
+    });
   } catch(e){
     console.error(e);
-    alert("Fehler beim Laden/Rendern: " + (e?.message || e));
+    alert("Fehler beim Laden/Rendern: " + (e && e.message ? e.message : e));
   }
 });
 
 /* ======== Opazität & Bounds-Rahmen ======== */
-const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
-op.addEventListener('input', () => { if (overlay) overlay.setOpacity(Number(op.value)/100); ovv.textContent = op.value + '%'; });
-document.getElementById('showBounds').addEventListener('change', () => {
-  const checked = document.getElementById('showBounds').checked;
+var op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
+op.addEventListener('input', function(){ if (overlay) overlay.setOpacity(Number(op.value)/100); ovv.textContent = op.value + '%'; });
+document.getElementById('showBounds').addEventListener('change', function(){
+  var checked = document.getElementById('showBounds').checked;
   if (checked) { rect = L.rectangle(overlay? overlay._bounds: baseBounds, { color: 'red', weight: 1 }).addTo(map); }
   else { if (rect) { map.removeLayer(rect); rect = null; } }
 });
 
 /* ======== Justage-UI ======== */
-document.getElementById('left').addEventListener('click',  () => { state.shiftX -= 1; persist(); });
-document.getElementById('right').addEventListener('click', () => { state.shiftX += 1; persist(); });
-document.getElementById('up').addEventListener('click',    () => { state.shiftY += 1; persist(); });
-document.getElementById('down').addEventListener('click',  () => { state.shiftY -= 1; persist(); });
-document.getElementById('wMinus').addEventListener('click',() => { state.scaleW -= 0.5; persist(); });
-document.getElementById('wPlus').addEventListener('click', () => { state.scaleW += 0.5; persist(); });
-document.getElementById('hMinus').addEventListener('click',() => { state.scaleH -= 0.5; persist(); });
-document.getElementById('hPlus').addEventListener('click', () => { state.scaleH += 0.5; persist(); });
+document.getElementById('left').addEventListener('click',  function(){ state.shiftX -= 1; persist(); });
+document.getElementById('right').addEventListener('click', function(){ state.shiftX += 1; persist(); });
+document.getElementById('up').addEventListener('click',    function(){ state.shiftY += 1; persist(); });
+document.getElementById('down').addEventListener('click',  function(){ state.shiftY -= 1; persist(); });
+document.getElementById('wMinus').addEventListener('click',function(){ state.scaleW -= 0.5; persist(); });
+document.getElementById('wPlus').addEventListener('click', function(){ state.scaleW += 0.5; persist(); });
+document.getElementById('hMinus').addEventListener('click',function(){ state.scaleH -= 0.5; persist(); });
+document.getElementById('hPlus').addEventListener('click', function(){ state.scaleH += 0.5; persist(); });
 updateUI();
 
-/* ======== Reset/Ansicht & Geolocation (wie gehabt) ======== */
-document.getElementById('reset').addEventListener('click', () => {
+/* ======== Reset/Ansicht & Geolocation ======== */
+document.getElementById('reset').addEventListener('click', function(){
   state.shiftX = state.shiftY = 0; state.scaleW = state.scaleH = 0;
   persist(); if (overlay) map.fitBounds((overlay._bounds || baseBounds).pad(0.1)); toast("Zurückgesetzt");
 });
 
-let watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
+var watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
 function startWatch(){
   if (watchId !== null) return;
-  watchId = navigator.geolocation.watchPosition(pos => {
-    const { latitude, longitude, accuracy } = pos.coords;
+  watchId = navigator.geolocation.watchPosition(function(pos){
+    var latitude = pos.coords.latitude, longitude = pos.coords.longitude, accuracy = pos.coords.accuracy;
     if (!gpsMarker) gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
     gpsMarker.setLatLng([latitude, longitude]);
     if (accCircle) map.removeLayer(accCircle);
     accCircle = L.circle([latitude, longitude], accuracy, {opacity:0.6, fillOpacity:0.08}).addTo(map);
     if (firstFix) { map.setView([latitude, longitude], Math.max(map.getZoom(), 12)); firstFix = false; }
-  }, err => { if (err.code === err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
-              else toast("GPS-Fehler: " + err.message); },
-  { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+  }, function(err){
+    if (err.code === err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+    else toast("GPS-Fehler: " + err.message);
+  }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
 }
-async function requestOnceThenWatch(){
-  try {
-    await new Promise((res, rej) => {
-      navigator.geolocation.getCurrentPosition(() => res(), e => rej(e),
-        { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
-    });
-    startWatch();
-    document.getElementById('loc').textContent = "📍 GPS aktiv";
-    toast("GPS aktiv");
-  } catch (e) {
-    if (e && e.code === e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
-    else toast("GPS-Fehler: " + (e?.message || e));
-  }
+function requestOnceThenWatch(){
+  return new Promise(function(res, rej){
+    navigator.geolocation.getCurrentPosition(function(){ res(); }, function(e){ rej(e); },
+      { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
+  }).then(function(){ startWatch(); document.getElementById('loc').textContent = "📍 GPS aktiv"; toast("GPS aktiv"); })
+    .catch(function(e){ if (e && e.code === e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
+                        else toast("GPS-Fehler: " + (e && e.message ? e.message : e)); });
 }
-document.getElementById('loc').addEventListener('click', () => {
+document.getElementById('loc').addEventListener('click', function(){
   if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
   if (watchId === null) requestOnceThenWatch();
   else {
