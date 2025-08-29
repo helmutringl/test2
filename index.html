@@ -213,8 +213,7 @@ var PRESETS = {
 /* ======== Map ======== */
 function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg; el.style.display='block';
   clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2200); }
-var map = L.map('map', { zoomControl:true });
-L.control.zoom({ position:'bottomright' }).addTo(map);
+var map = L.map('map', { zoomControl:false }); // Zoom-Buttons aus
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
 /* ======== Leaflet-Controls: Links oben (2 Buttons) ======== */
@@ -268,7 +267,7 @@ var currentPalette=localStorage.getItem('ovPalette')||'spectral';
 paletteSel.value=currentPalette;
 paletteSel.addEventListener('change', function(){ currentPalette=this.value; localStorage.setItem('ovPalette', currentPalette); if(lastCells){ rerenderSameData(); } });
 function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
-function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t)),Math.round(lerp(c1[2],c2[2],t))]; }
+function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t))]; }
 function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); var c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)), r=0,g=0,b=0;
   if(hp<1){r=c;g=x;} else if(hp<2){r=x;g=c;} else if(hp<3){g=c;b=x;} else if(hp<4){g=x;b=c;} else if(hp<5){r=x;b=c;} else {r=c;b=x;} var m=l-c/2; return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];}
 function getStops(name){
