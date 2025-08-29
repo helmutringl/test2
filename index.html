@@ -263,6 +263,27 @@ function bboxFromGeom(geom){
   walk(coords);
   return [minx,miny,maxx,maxy];
 }
+function quantile(sorted, q){
+  // sorted: bereits sortiertes Zahlen-Array
+  if (!sorted.length) return NaN;
+  var pos = (sorted.length - 1) * q;
+  var base = Math.floor(pos);
+  var rest = pos - base;
+  if (sorted[base+1] !== undefined) return sorted[base] + rest * (sorted[base+1] - sorted[base]);
+  return sorted[base];
+}
+function robustRange(vals){
+  // 2%–98% Stretch, fallback auf echtes Min/Max
+  var arr = [];
+  for (var i=0;i<vals.length;i++) if (isFinite(vals[i])) arr.push(vals[i]);
+  if (!arr.length) return {vmin:0, vmax:1};
+  arr.sort(function(a,b){return a-b;});
+  var v2 = quantile(arr, 0.02);
+  var v98 = quantile(arr, 0.98);
+  if (!isFinite(v2) || !isFinite(v98) || v98 <= v2) { v2 = arr[0]; v98 = arr[arr.length-1]; }
+  if (v98 <= v2) { v98 = v2 + 1e-6; }
+  return { vmin: v2, vmax: v98 };
+}
 
 /* ======== Canvas-Rasterizer ======== */
 function renderToCanvas(cells, bounds){
@@ -274,30 +295,38 @@ function renderToCanvas(cells, bounds){
   var cvs = document.createElement('canvas');
   cvs.width = PX_W; cvs.height = PX_H;
   var ctx = cvs.getContext('2d', { willReadFrequently: false });
+  ctx.imageSmoothingEnabled = false;
+
   var img = ctx.createImageData(PX_W, PX_H);
   var data = img.data;
 
   var lonPerPx = widthDeg / PX_W;
   var latPerPx = heightDeg / PX_H;
 
-  var vmin = Infinity, vmax = -Infinity;
-  for (var i=0;i<cells.length;i++){
-    var vi = cells[i].v;
-    if (isFinite(vi)){ if (vi<vmin) vmin=vi; if (vi>vmax) vmax=vi; }
-  }
-  if (!isFinite(vmin) || !isFinite(vmax)) { vmin = 0; vmax = 1; }
+  // --- Wertebereich robust bestimmen (2–98 %) ---
+  var vals = new Array(cells.length);
+  for (var i=0;i<cells.length;i++) vals[i] = cells[i].v;
+  var rr = robustRange(vals);
+  var vmin = rr.vmin, vmax = rr.vmax;
+
+  // Debug ins Console/Toast
+  console.log("RR Range (robust):", vmin, "…", vmax, "| N=", cells.length);
 
   var done = 0;
   for (var c=0;c<cells.length;c++){
     var cell = cells[c];
+
+    // Pixelrechteck aus Geo-BBOX
     var minx = Math.max(0, Math.floor((cell.minx - bounds.west)/lonPerPx));
     var maxx = Math.min(PX_W-1, Math.ceil ((cell.maxx - bounds.west)/lonPerPx));
     var miny = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
     var maxy = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
 
-    var col = colorFor(cell.v, vmin, vmax);
-    var r = col[0], g = col[1], b = col[2], a = col[3];
+    // Farbe
+    var col = colorFor(cell.v, vmin, vmax); // [r,g,b,255]
+    var r = col[0], g = col[1], b = col[2], a = 255;
 
+    // Füllen
     for (var y=miny; y<=maxy; y++){
       var idx = (y*PX_W + minx)*4;
       for (var x=minx; x<=maxx; x++){
