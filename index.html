@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
 <title>NÖ • 14-Tage-Niederschlag (Client-Rendering)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
 <style>
   :root{ --pad: max(12px, env(safe-area-inset-top, 0)); }
   html,body,#map{height:100%;margin:0}
@@ -52,6 +53,24 @@
   input[type="range"]{width:160px}
   .progress{height:6px; background:#eee; border-radius:999px; overflow:hidden; width:100%}
   .bar{height:100%; width:0%; background:#4f46e5; transition:width .15s}
+
+  /* Bottom Chart Panel */
+  #chartPanel{
+    position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
+    width:min(680px, 96vw);
+    background:#fff; border:1px solid #e5e5e5; border-radius:12px;
+    box-shadow:0 12px 28px rgba(0,0,0,.18);
+    z-index:1001; display:none;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+  }
+  #chartPanel.open{display:block}
+  #chartHead{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:10px 12px; border-bottom:1px solid #eee;
+  }
+  #chartBody{ padding:8px 12px 12px 12px; }
+  #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
 </style>
 </head>
 <body>
@@ -143,6 +162,21 @@
     </div>
   </div>
 
+  <!-- Bottom chart panel -->
+  <div id="chartPanel" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
+    <div id="chartHead">
+      <div>
+        <div id="chartTitle"><strong>14-Tage-Summe (RR) am Punkt</strong></div>
+        <div id="chartSub" class="hint"></div>
+      </div>
+      <button id="closeChart">Schließen</button>
+    </div>
+    <div id="chartBody">
+      <canvas id="chartCanvas" height="160"></canvas>
+      <div id="chartMeta"></div>
+    </div>
+  </div>
+
   <div id="toast"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
@@ -187,6 +221,7 @@ var baseBoundsObj = null;
 var lastCanvas = null;   // für Download
 var lastCells = null;    // für Re-Render ohne Download
 var lastStepPx = null;   // geschätzte Kachelgröße
+var clickMarker = null;
 
 /* ======== Progress-Bar ======== */
 var bar = document.getElementById('bar');
@@ -247,7 +282,6 @@ function loadFeatureCollection(start, end, bbox){
       return fc;
     });
 }
-
 function extractValues(props, nt){
   var prefer = [PARAM, String(PARAM).toLowerCase(), "RRsum","rr_sum","value","values"];
   for (var i=0;i<prefer.length;i++){
@@ -283,7 +317,6 @@ function extractValues(props, nt){
   scan(props);
   return found;
 }
-
 function bboxFromGeom(geom){
   var coords = geom && geom.coordinates;
   var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
@@ -348,8 +381,8 @@ var state = {
   shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
   scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
   scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
-  tileScaleX: Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 2) || 2), // min 200%
-  tileScaleY: Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2) || 2), // min 200%
+  tileScaleX: Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 2) || 2), // 200–500 %
+  tileScaleY: Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2) || 2),
 };
 var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
 var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
@@ -358,13 +391,10 @@ var tileXVal = document.getElementById('tileXVal'), tileYVal = document.getEleme
 var tileXpx = document.getElementById('tileXpx'), tileYpx = document.getElementById('tileYpx');
 
 function updateUI(){
-  // Clamp Tile-Scale 200–500 %
   state.tileScaleX = Math.min(5, Math.max(2, state.tileScaleX));
   state.tileScaleY = Math.min(5, Math.max(2, state.tileScaleY));
-
   pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
   wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1);
-
   tileX.value = String(Math.round(state.tileScaleX*100));
   tileY.value = String(Math.round(state.tileScaleY*100));
   tileXVal.textContent = Math.round(state.tileScaleX*100) + "%";
@@ -387,7 +417,7 @@ function persist(){
   updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
 }
 
-/* ======== Canvas-Renderer (Pixel-Kacheln, Perzentile) ======== */
+/* ======== Canvas-Renderer ======== */
 function renderToCanvas(cells, bounds){
   var PX_W = CANVAS_W;
   var widthDeg  = bounds.east - bounds.west;
@@ -411,35 +441,29 @@ function renderToCanvas(cells, bounds){
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
 
-  // Kachelgröße in PIXELN (Auto) + manuelle Skalierung (200–500 %)
+  // Kachelgröße (px)
   var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, PX_W, PX_H);
-  lastStepPx = stepPx; // für Anzeige & Slider-Labels
+  lastStepPx = stepPx;
   var halfDxPx = Math.max(0.5, 0.5 * stepPx.dx * state.tileScaleX);
   var halfDyPx = Math.max(0.5, 0.5 * stepPx.dy * state.tileScaleY);
 
   var done = 0;
   for (var c=0;c<cells.length;c++){
     var cell = cells[c];
-
-    // Rechteck in Pixelkoordinaten bestimmen
     var px0, px1, py0, py1;
-
     var cw_px = (cell.maxx - cell.minx)/lonPerPx;
     var ch_px = (cell.maxy - cell.miny)/latPerPx;
 
     if (cw_px>1 && ch_px>1){
-      // echtes Polygon/BBox -> direkt umrechnen
       px0 = Math.max(0, Math.floor((cell.minx - bounds.west)/lonPerPx));
       px1 = Math.min(PX_W-1, Math.ceil ((cell.maxx - bounds.west)/lonPerPx));
       py0 = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
       py1 = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
     } else {
-      // Punkt -> als Kachel um den Mittelpunkt aufblasen (Pixelmaß + Slider)
       var cx_deg = 0.5*(cell.minx + cell.maxx);
       var cy_deg = 0.5*(cell.miny + cell.maxy);
       var cx_px = (cx_deg - bounds.west)/lonPerPx;
       var cy_px = (bounds.north - cy_deg)/latPerPx;
-
       px0 = Math.max(0, Math.floor(cx_px - halfDxPx));
       px1 = Math.min(PX_W-1, Math.ceil (cx_px + halfDxPx));
       py0 = Math.max(0, Math.floor(cy_px - halfDyPx));
@@ -526,23 +550,17 @@ document.getElementById('renderBtn').addEventListener('click', function(){
       var timestamps = fc.timestamps || [];
       var nt = timestamps.length;
 
-      // FC -> Zellen (Summe)
       var feats = fc.features || [];
       var cells = [];
       for (var i=0;i<feats.length;i++){
-        var f = feats[i];
-        var geom = f && f.geometry;
-        if (!geom) continue;
-        var props = f.properties || {};
-        var vals = extractValues(props, nt);
-        if (!vals) continue;
-        var sum = 0;
-        for (var j=0;j<vals.length;j++){ var vv = vals[j]; if (isFinite(vv)) sum += vv; }
+        var f = feats[i]; var geom = f && f.geometry; if (!geom) continue;
+        var props = f.properties || {}; var vals = extractValues(props, nt); if (!vals) continue;
+        var sum = 0; for (var j=0;j<vals.length;j++){ var vv = vals[j]; if (isFinite(vv)) sum += vv; }
         var bb = bboxFromGeom(geom);
         cells.push({ v: sum, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
         if ((i % 1500) === 0) progress(i / feats.length);
       }
-      lastCells = cells.slice(0); // speichern für Re-Render
+      lastCells = cells.slice(0);
 
       toast("Zellen: " + cells.length);
       var rr = renderToCanvas(cells, baseBoundsObj);
@@ -588,29 +606,12 @@ document.getElementById('hMinus').addEventListener('click',function(){ state.sca
 document.getElementById('hPlus').addEventListener('click', function(){ state.scaleH += 0.5; persist(); });
 
 /* ======== Tile-Slider (live Re-Render) ======== */
-tileX.addEventListener('input', function(){
-  state.tileScaleX = Number(tileX.value)/100; // 2.0 … 5.0
-  persist();
-  rerenderSameData();
-});
-tileY.addEventListener('input', function(){
-  state.tileScaleY = Number(tileY.value)/100; // 2.0 … 5.0
-  persist();
-  rerenderSameData();
-});
+tileX.addEventListener('input', function(){ state.tileScaleX = Number(tileX.value)/100; persist(); rerenderSameData(); });
+tileY.addEventListener('input', function(){ state.tileScaleY = Number(tileY.value)/100; persist(); rerenderSameData(); });
 
 updateUI();
 
-/* ======== Reset/Ansicht & Geolocation ======== */
-document.getElementById('reset').addEventListener('click', function(){
-  state.shiftX = state.shiftY = 0; state.scaleW = state.scaleH = 0;
-  state.tileScaleX = state.tileScaleY = 2; // 200%
-  persist();
-  if (overlay) map.fitBounds((overlay._bounds || baseBounds).pad(0.1));
-  if (lastCells) rerenderSameData();
-  toast("Zurückgesetzt");
-});
-
+/* ======== Geolocation ======== */
 var watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
 function startWatch(){
   if (watchId !== null) return;
@@ -645,6 +646,121 @@ document.getElementById('loc').addEventListener('click', function(){
     document.getElementById('loc').textContent = "📍 Meine Position";
     toast("GPS aus");
   }
+});
+
+/* ======== Punkt-Zeitreihe (Klick auf Karte) ======== */
+var chartEl = document.getElementById('chartPanel');
+var chartTitle = document.getElementById('chartTitle');
+var chartSub = document.getElementById('chartSub');
+var chartMeta = document.getElementById('chartMeta');
+var closeChartBtn = document.getElementById('closeChart');
+var chartCanvas = document.getElementById('chartCanvas');
+var pointChart = null;
+
+closeChartBtn.addEventListener('click', function(){
+  if (pointChart){ pointChart.destroy(); pointChart = null; }
+  chartEl.classList.remove('open');
+});
+
+function kmToDegLat(km){ return km / 111.0; }
+function kmToDegLon(km, lat){ return km / (111.320*Math.cos(lat*Math.PI/180)); }
+
+/* Kleine BBOX um Klickpunkt, um eine Handvoll Zellen zu bekommen */
+function buildPointBBox(lat, lon){
+  var halfKm = 2.0; // ~2 km
+  var dLat = kmToDegLat(halfKm);
+  var dLon = kmToDegLon(halfKm, lat);
+  return [lat - dLat, lon - dLon, lat + dLat, lon + dLon];
+}
+
+function dist2Deg(lat1, lon1, lat2, lon2){
+  var x = (lon2 - lon1) * Math.cos((lat1+lat2)*0.5*Math.PI/180);
+  var y = (lat2 - lat1);
+  return x*x + y*y;
+}
+
+function fetchPointTimeseries(lat, lon, start, end){
+  var bbox = buildPointBBox(lat, lon);
+  return loadFeatureCollection(start, end, bbox).then(function(fc){
+    var ts = fc.timestamps || [];
+    var feats = fc.features || [];
+    if (!feats.length) throw new Error("Keine Rasterzelle in der Nähe gefunden.");
+    var best = null, bestD = Infinity, bestVals = null, bestBB = null;
+    for (var i=0;i<feats.length;i++){
+      var f = feats[i]; var bb = bboxFromGeom(f.geometry);
+      var cx = 0.5*(bb[0]+bb[2]), cy = 0.5*(bb[1]+bb[3]);
+      var d2 = dist2Deg(lat, lon, cy, cx);
+      var vals = extractValues(f.properties || {}, ts.length);
+      if (!vals) continue;
+      if (d2 < bestD){ bestD = d2; best = f; bestVals = vals; bestBB = bb; }
+    }
+    if (!bestVals) throw new Error("Keine Werte im nächsten Raster gefunden.");
+    return { timestamps: ts, values: bestVals, cellBBox: bestBB };
+  });
+}
+
+function openChart(lat, lon, timestamps, values){
+  // Labels als lokale YYYY-MM-DD
+  var labels = timestamps.map(function(iso){
+    return iso.slice(0,10);
+  });
+  // Summe/Min/Max
+  var sum = 0, vmin = Infinity, vmax = -Infinity;
+  for (var i=0;i<values.length;i++){
+    var v = Number(values[i]); if (!isFinite(v)) v = 0;
+    sum += v; if (v<vmin) vmin=v; if (v>vmax) vmax=v;
+  }
+
+  // Chart bauen/ersetzen
+  if (pointChart){ pointChart.destroy(); pointChart = null; }
+  pointChart = new Chart(chartCanvas.getContext('2d'), {
+    type: 'bar',
+    data: {
+      labels: labels,
+      datasets: [{
+        label: 'RR (mm/Tag)',
+        data: values,
+      }]
+    },
+    options: {
+      responsive: true,
+      animation: { duration: 200 },
+      scales: {
+        x: { title: { display: true, text: 'Tag' }, ticks: { maxRotation: 0, autoSkip: true } },
+        y: { title: { display: true, text: 'mm' }, beginAtZero: true }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: {
+          label: function(ctx){ return (ctx.raw ?? 0).toFixed(1) + ' mm'; }
+        } }
+      }
+    }
+  });
+
+  chartTitle.innerHTML = '<strong>RR (letzte 14 Tage)</strong>';
+  chartSub.textContent = 'Punkt: ' + lat.toFixed(5) + ', ' + lon.toFixed(5);
+  chartMeta.innerHTML = `
+    <span>Zeitraum: <code>${labels[0]} – ${labels[labels.length-1]}</code></span>
+    <span>Summe: <code>${sum.toFixed(1)} mm</code></span>
+    <span>Min: <code>${isFinite(vmin)?vmin.toFixed(1):'–'} mm</code></span>
+    <span>Max: <code>${isFinite(vmax)?vmax.toFixed(1):'–'} mm</code></span>
+  `;
+  chartEl.classList.add('open');
+}
+
+map.on('click', function(e){
+  var lat = e.latlng.lat, lon = e.latlng.lng;
+  if (clickMarker) map.removeLayer(clickMarker);
+  clickMarker = L.circleMarker([lat, lon], { radius: 6, color: '#111', fillColor:'#4f46e5', fillOpacity:0.9 }).addTo(map);
+  toast('Lade Zeitreihe …');
+  var start = startEl.value, end = endEl.value;
+  fetchPointTimeseries(lat, lon, start, end).then(function(res){
+    openChart(lat, lon, res.timestamps, res.values);
+  }).catch(function(err){
+    console.error(err);
+    alert("Zeitreihe fehlgeschlagen: " + (err && err.message ? err.message : err));
+  });
 });
 </script>
 </body>
