@@ -6,31 +6,72 @@
   <title>NÖ • 14-Tage-Niederschlag</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
   <style>
+    :root{
+      --pad: max(12px, env(safe-area-inset-top, 0));
+    }
     html,body,#map{height:100%;margin:0}
-    .ui{position:absolute;z-index:1000;background:#fff;padding:6px 10px;border-radius:8px;
-        box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,-apple-system,Segoe UI,Roboto}
-    #loc{top:12px;left:12px}
-    #reset{top:58px;left:12px}
-    #panel{top:12px;right:12px;min-width:260px}
-    #panel .row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
-    #panel .row small{opacity:.7}
-    #panel button.kb{min-width:30px;height:28px;border:1px solid #ddd;border-radius:6px;background:#fafafa}
-    #panel code{background:#f3f3f3;padding:1px 6px;border-radius:4px}
+    .stack-left{
+      position:fixed; z-index:1000;
+      top: calc(env(safe-area-inset-top, 0) + 12px);
+      left: calc(env(safe-area-inset-left, 0) + 12px);
+      display:flex; flex-direction:column; gap:8px;
+    }
+    .btn{
+      background:#fff; padding:8px 12px; border-radius:10px; border:1px solid #e5e5e5;
+      box-shadow:0 2px 8px rgba(0,0,0,.12);
+      font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+    }
+    /* schwebender Gear-Button */
+    #fab{
+      position:fixed; z-index:1001;
+      top: calc(env(safe-area-inset-top, 0) + 12px);
+      right: calc(env(safe-area-inset-right, 0) + 12px);
+      width:42px; height:42px; border-radius:50%;
+      display:grid; place-items:center;
+    }
+    /* einklappbares Panel (Drawer) */
+    #drawer{
+      position:fixed; z-index:1000;
+      top: calc(env(safe-area-inset-top, 0) + 60px);
+      right: calc(env(safe-area-inset-right, 0) + 12px);
+      width:min(320px, 92vw); max-height:70vh; overflow:auto;
+      background:#fff; border:1px solid #e5e5e5; border-radius:12px;
+      box-shadow:0 8px 24px rgba(0,0,0,.18);
+      transform: translateX(110%); transition: transform .22s ease-out;
+      padding:10px 12px;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+    }
+    #drawer.open{ transform:none; }
+    #drawer .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    #drawer .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa }
+    #drawer code{ background:#f3f3f3; padding:1px 6px; border-radius:4px }
+    #toast{
+      position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:1002;
+      background:#111; color:#fff; padding:8px 12px; border-radius:8px; opacity:.92; display:none;
+      font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:13px;
+    }
     label{font-size:12px}
-    #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:1001;
-           background:#111;color:#fff;padding:8px 12px;border-radius:8px;opacity:.92;display:none}
   </style>
 </head>
 <body>
   <div id="map"></div>
 
-  <button class="ui" id="loc">📍 Meine Position</button>
-  <button class="ui" id="reset">↺ Ansicht/Reset</button>
+  <!-- Linke Buttons (gestapelt, kein Overlap) -->
+  <div class="stack-left">
+    <button class="btn" id="loc">📍 Meine Position</button>
+    <button class="btn" id="reset">↺ Ansicht/Reset</button>
+  </div>
 
-  <div class="ui" id="panel">
+  <!-- Gear zum Öffnen/Schließen -->
+  <button class="btn" id="fab" aria-label="Einstellungen">⚙️</button>
+
+  <!-- Einklappbares Korrektur-Panel -->
+  <div id="drawer" aria-hidden="true">
     <div class="row">
-      <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="85">
-        <span id="ovv">85%</span></label>
+      <label>Overlay
+        <input type="range" id="opacity" min="30" max="100" value="85">
+        <span id="ovv">85%</span>
+      </label>
     </div>
 
     <div class="row">
@@ -74,7 +115,8 @@
   // ===== KONFIG ==============================================================
   const PNG_URL = "noe_rr_sum_2025-08-14_bis_2025-08-27.png";
   const FALLBACK_BOUNDS = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
-  const DEFAULTS = { shiftX: 0, shiftY: 0, scaleW: 0.0, scaleH: 0.0 }; // px, px, %, %
+  // Optional: deine gefundenen Defaults hier eintragen (z.B. scaleW: 2.5)
+  const DEFAULTS = { shiftX: 0, shiftY: 0, scaleW: 2.5, scaleH: 0.0 }; // px, px, %, %
   const STEP = { shift: 1, scale: 0.5 }; // 1 px / 0.5 %
   // ===========================================================================
 
@@ -82,9 +124,7 @@
                            clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 2200); };
 
   const map = L.map('map', { zoomControl: true });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    maxZoom: 19, attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
 
   async function loadBounds() {
     try {
@@ -100,33 +140,20 @@
     const base = await loadBounds();
     const baseBounds = L.latLngBounds([base.south, base.west], [base.north, base.east]);
 
-    // UI refs
-    const pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
-    const wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
-    const btn = {
-      left:  document.getElementById('left'),
-      right: document.getElementById('right'),
-      up:    document.getElementById('up'),
-      down:  document.getElementById('down'),
-      wMinus:document.getElementById('wMinus'),
-      wPlus: document.getElementById('wPlus'),
-      hMinus:document.getElementById('hMinus'),
-      hPlus: document.getElementById('hPlus'),
+    // Drawer open/close
+    const fab = document.getElementById('fab');
+    const drawer = document.getElementById('drawer');
+    const toggleDrawer = () => {
+      const open = !drawer.classList.contains('open');
+      drawer.classList.toggle('open', open);
+      drawer.setAttribute('aria-hidden', String(!open));
     };
+    fab.addEventListener('click', toggleDrawer);
 
-    // State (mit Persistenz)
-    let state = {
-      shiftX: Number(localStorage.getItem('ovShiftX') ?? DEFAULTS.shiftX) || 0,
-      shiftY: Number(localStorage.getItem('ovShiftY') ?? DEFAULTS.shiftY) || 0,
-      scaleW: Number(localStorage.getItem('ovScaleW') ?? DEFAULTS.scaleW) || 0,
-      scaleH: Number(localStorage.getItem('ovScaleH') ?? DEFAULTS.scaleH) || 0,
-    };
-    const updateUI = () => { pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
-                             wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1); };
-
+    // Overlay
     const overlay = L.imageOverlay(PNG_URL + '?v=' + Date.now(), baseBounds, { opacity: 0.85, crossOrigin: '' }).addTo(map);
     map.fitBounds(baseBounds.pad(0.1));
-    overlay.on('load', () => { toast('Overlay geladen'); applyTransform(); });
+    overlay.on('load', () => toast('Overlay geladen'));
     overlay.on('error', () => toast('Overlay nicht gefunden – Dateiname/Ort prüfen'));
 
     // Transparenz
@@ -137,29 +164,46 @@
     // Bounds-Rahmen
     const showBounds = document.getElementById('showBounds');
     let rect = null;
+    showBounds.addEventListener('change', () => {
+      if (showBounds.checked) {
+        rect = L.rectangle(overlay._bounds || baseBounds, { color: 'red', weight: 1 }).addTo(map);
+      } else if (rect) {
+        map.removeLayer(rect); rect = null;
+      }
+    });
+
+    // Justage-State (persistiert)
+    const pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
+    const wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
+    let state = {
+      shiftX: Number(localStorage.getItem('ovShiftX') ?? DEFAULTS.shiftX) || 0,
+      shiftY: Number(localStorage.getItem('ovShiftY') ?? DEFAULTS.shiftY) || 0,
+      scaleW: Number(localStorage.getItem('ovScaleW') ?? DEFAULTS.scaleW) || 0,
+      scaleH: Number(localStorage.getItem('ovScaleH') ?? DEFAULTS.scaleH) || 0,
+    };
+    const updateUI = () => { pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
+                             wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1); };
 
     function applyTransform() {
-      // Basis-Daten
       const B = base;
       const wdeg0 = (B.east - B.west);
       const hdeg0 = (B.north - B.south);
       const cx = B.west + wdeg0/2;
       const cy = B.south + hdeg0/2;
 
-      // Skaliere Breite/Höhe (in %), zentriert
+      // Skalierung (zentriert)
       const wdeg = wdeg0 * (1 + state.scaleW / 100);
       const hdeg = hdeg0 * (1 + state.scaleH / 100);
 
-      // Pixel -> Grad (für Verschiebung)
+      // Pixel -> Grad für Verschiebung (bezogen auf Originalbreite/Höhe)
       const wpx = overlay._image?.naturalWidth  || 0;
       const hpx = overlay._image?.naturalHeight || 0;
-      const lonPerPx = wpx ? (wdeg0 / wpx) : 0;   // Verschiebung bezieht sich auf Originalbreite!
+      const lonPerPx = wpx ? (wdeg0 / wpx) : 0;
       const latPerPx = hpx ? (hdeg0 / hpx) : 0;
 
       const dLon = state.shiftX * lonPerPx;
-      const dLat = state.shiftY * latPerPx; // +Y = Richtung Norden (↑)
+      const dLat = state.shiftY * latPerPx;
 
-      // Neu berechnete Bounds
       const west  = (cx - wdeg/2) + dLon;
       const east  = (cx + wdeg/2) + dLon;
       const south = (cy - hdeg/2) + dLat;
@@ -167,20 +211,19 @@
 
       const adj = L.latLngBounds([south, west], [north, east]);
       overlay.setBounds(adj);
-
       if (rect && showBounds.checked) rect.setBounds(adj);
     }
 
-    // Buttons/Keys
-    btn.left.addEventListener('click',  () => { state.shiftX -= STEP.shift; persist(); });
-    btn.right.addEventListener('click', () => { state.shiftX += STEP.shift; persist(); });
-    btn.up.addEventListener('click',    () => { state.shiftY += STEP.shift; persist(); });
-    btn.down.addEventListener('click',  () => { state.shiftY -= STEP.shift; persist(); });
-
-    btn.wMinus.addEventListener('click', () => { state.scaleW -= STEP.scale; persist(); });
-    btn.wPlus .addEventListener('click', () => { state.scaleW += STEP.scale; persist(); });
-    btn.hMinus.addEventListener('click', () => { state.scaleH -= STEP.scale; persist(); });
-    btn.hPlus .addEventListener('click', () => { state.scaleH += STEP.scale; persist(); });
+    // Buttons/Keyboard
+    const STEP = { shift: 1, scale: 0.5 };
+    document.getElementById('left').addEventListener('click',  () => { state.shiftX -= STEP.shift; persist(); });
+    document.getElementById('right').addEventListener('click', () => { state.shiftX += STEP.shift; persist(); });
+    document.getElementById('up').addEventListener('click',    () => { state.shiftY += STEP.shift; persist(); });
+    document.getElementById('down').addEventListener('click',  () => { state.shiftY -= STEP.shift; persist(); });
+    document.getElementById('wMinus').addEventListener('click',() => { state.scaleW -= STEP.scale; persist(); });
+    document.getElementById('wPlus').addEventListener('click', () => { state.scaleW += STEP.scale; persist(); });
+    document.getElementById('hMinus').addEventListener('click',() => { state.scaleH -= STEP.scale; persist(); });
+    document.getElementById('hPlus').addEventListener('click', () => { state.scaleH += STEP.scale; persist(); });
 
     window.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowLeft')  { state.shiftX -= STEP.shift; persist(); }
@@ -202,15 +245,7 @@
     }
     updateUI();
 
-    showBounds.addEventListener('change', () => {
-      if (showBounds.checked) {
-        rect = L.rectangle(overlay._bounds || baseBounds, { color: 'red', weight: 1 }).addTo(map);
-      } else if (rect) {
-        map.removeLayer(rect); rect = null;
-      }
-    });
-
-    // Reset/Ansicht-Button
+    // Reset-Button links
     document.getElementById('reset').addEventListener('click', () => {
       state = { ...DEFAULTS };
       persist();
@@ -218,25 +253,20 @@
       toast("Zurückgesetzt");
     });
 
-    // === Geolocation (Prompt einmalig, dann Watch) ===========================
+    // Geolocation
     let watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
     function startWatch(){
       if (watchId !== null) return;
       watchId = navigator.geolocation.watchPosition(pos => {
         const { latitude, longitude, accuracy } = pos.coords;
-        if (!gpsMarker) {
-          gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
-        }
+        if (!gpsMarker) gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
         gpsMarker.setLatLng([latitude, longitude]);
         if (accCircle) map.removeLayer(accCircle);
         accCircle = L.circle([latitude, longitude], accuracy, {opacity:0.6, fillOpacity:0.08}).addTo(map);
         if (firstFix) { map.setView([latitude, longitude], Math.max(map.getZoom(), 12)); firstFix = false; }
       }, err => {
-        if (err.code === err.PERMISSION_DENIED) {
-          toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
-        } else {
-          toast("GPS-Fehler: " + err.message);
-        }
+        if (err.code === err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+        else toast("GPS-Fehler: " + err.message);
       }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
     }
     async function requestOnceThenWatch(){
@@ -249,18 +279,14 @@
         document.getElementById('loc').textContent = "📍 GPS aktiv";
         toast("GPS aktiv");
       } catch (e) {
-        if (e && e.code === e.PERMISSION_DENIED) {
-          toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
-        } else {
-          toast("GPS-Fehler: " + (e?.message || e));
-        }
+        if (e && e.code === e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
+        else toast("GPS-Fehler: " + (e?.message || e));
       }
     }
     document.getElementById('loc').addEventListener('click', () => {
       if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
-      if (watchId === null) {
-        requestOnceThenWatch();
-      } else {
+      if (watchId === null) requestOnceThenWatch();
+      else {
         navigator.geolocation.clearWatch(watchId);
         watchId = null; firstFix = true;
         if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
@@ -274,11 +300,8 @@
     let manual = null;
     map.on('click', (e) => {
       const { lat, lng } = e.latlng;
-      if (!manual) {
-        manual = L.marker([lat, lng], { draggable: true }).addTo(map).bindPopup("Manuell gesetzt");
-      } else {
-        manual.setLatLng([lat, lng]);
-      }
+      if (!manual) manual = L.marker([lat, lng], { draggable: true }).addTo(map).bindPopup("Manuell gesetzt");
+      else manual.setLatLng([lat, lng]);
     });
   })();
   </script>
