@@ -95,6 +95,7 @@
       <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="85">
         <span id="ovv">85%</span></label>
       <label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label>
+      <button class="kb" id="dlPng">PNG speichern</button>
     </div>
 
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
@@ -170,6 +171,7 @@ var overlay = null;      // Leaflet imageOverlay
 var rect = null;         // Debug-bounds rectangle
 var baseBounds = null;   // Leaflet LatLngBounds
 var baseBoundsObj = null;
+var lastCanvas = null;   // für Download
 
 /* ======== Progress-Bar ======== */
 var bar = document.getElementById('bar');
@@ -197,7 +199,61 @@ function colorFor(v, vmin, vmax){
   return [rgb[0], rgb[1], rgb[2], 255];
 }
 
-/* ======== FeatureCollection laden & summieren ======== */
+/* ======== Stats/Quantile/Schrittweite ======== */
+function quantile(sorted, q){
+  if (!sorted.length) return NaN;
+  var pos = (sorted.length - 1) * q;
+  var base = Math.floor(pos);
+  var rest = pos - base;
+  if (sorted[base+1] !== undefined) return sorted[base] + rest * (sorted[base+1] - sorted[base]);
+  return sorted[base];
+}
+function robustRange(vals){
+  var arr = [];
+  for (var i=0;i<vals.length;i++) if (isFinite(vals[i])) arr.push(vals[i]);
+  if (!arr.length) return {vmin:0, vmax:1};
+  arr.sort(function(a,b){return a-b;});
+  var v2 = quantile(arr, 0.02);
+  var v98 = quantile(arr, 0.98);
+  if (!isFinite(v2) || !isFinite(v98) || v98 <= v2) { v2 = arr[0]; v98 = arr[arr.length-1]; }
+  if (v98 <= v2) { v98 = v2 + 1e-6; }
+  return { vmin: v2, vmax: v98 };
+}
+function medianFrom(arr){
+  var a = []; for (var i=0;i<arr.length;i++) if (isFinite(arr[i])) a.push(arr[i]);
+  if (!a.length) return NaN;
+  a.sort(function(x,y){return x-y;});
+  var mid = 0.5*(a.length-1), lo = Math.floor(mid), hi = Math.ceil(mid);
+  return a[lo] + (mid-lo) * (a[hi]-a[lo]);
+}
+function estimateGridStep(cells, bounds){
+  var widths=[], heights=[], cx=[], cy=[];
+  for (var i=0;i<cells.length;i++){
+    var w = cells[i].maxx - cells[i].minx;
+    var h = cells[i].maxy - cells[i].miny;
+    if (w>0) widths.push(w);
+    if (h>0) heights.push(h);
+    var x = 0.5*(cells[i].minx + cells[i].maxx);
+    var y = 0.5*(cells[i].miny + cells[i].maxy);
+    cx.push(x); cy.push(y);
+  }
+  var dx = medianFrom(widths), dy = medianFrom(heights);
+  if (!isFinite(dx) || dx<=0){
+    cx.sort(function(a,b){return a-b;});
+    var difX=[]; for (var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if (d>0) difX.push(d); }
+    dx = medianFrom(difX);
+  }
+  if (!isFinite(dy) || dy<=0){
+    cy.sort(function(a,b){return a-b;});
+    var difY=[]; for (var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if (d2>0) difY.push(d2); }
+    dy = medianFrom(difY);
+  }
+  if (!isFinite(dx) || dx<=0){ dx = (bounds.east - bounds.west) / Math.max(1, Math.sqrt(cells.length)); }
+  if (!isFinite(dy) || dy<=0){ dy = (bounds.north - bounds.south) / Math.max(1, Math.sqrt(cells.length)); }
+  return { dx: dx*0.98, dy: dy*0.98 }; // leichte Überlappung
+}
+
+/* ======== FeatureCollection laden ======== */
 function loadFeatureCollection(start, end, bbox){
   var params = new URLSearchParams({ parameters: PARAM, start: start, end: end, bbox: bbox.join(',') });
   return fetch(DATASET_URL + "?" + params.toString(), { headers: { "Accept":"application/json" } })
@@ -222,7 +278,7 @@ function extractValues(props, nt){
   var keys = Object.keys(props);
   for (var k=0;k<keys.length;k++){
     var v2 = props[keys[k]];
-    if (Array.isArray(v2) && v2.length===nt) {
+    if (Array.isArray(v2) && (nt? v2.length===nt : v2.length>0)) {
       var out2 = []; for (var j2=0;j2<v2.length;j2++){ var y=v2[j2]; if (typeof y==='number' && isFinite(y)) out2.push(Number(y)); }
       if (out2.length>0) return out2;
     }
@@ -263,31 +319,10 @@ function bboxFromGeom(geom){
   walk(coords);
   return [minx,miny,maxx,maxy];
 }
-function quantile(sorted, q){
-  // sorted: bereits sortiertes Zahlen-Array
-  if (!sorted.length) return NaN;
-  var pos = (sorted.length - 1) * q;
-  var base = Math.floor(pos);
-  var rest = pos - base;
-  if (sorted[base+1] !== undefined) return sorted[base] + rest * (sorted[base+1] - sorted[base]);
-  return sorted[base];
-}
-function robustRange(vals){
-  // 2%–98% Stretch, fallback auf echtes Min/Max
-  var arr = [];
-  for (var i=0;i<vals.length;i++) if (isFinite(vals[i])) arr.push(vals[i]);
-  if (!arr.length) return {vmin:0, vmax:1};
-  arr.sort(function(a,b){return a-b;});
-  var v2 = quantile(arr, 0.02);
-  var v98 = quantile(arr, 0.98);
-  if (!isFinite(v2) || !isFinite(v98) || v98 <= v2) { v2 = arr[0]; v98 = arr[arr.length-1]; }
-  if (v98 <= v2) { v98 = v2 + 1e-6; }
-  return { vmin: v2, vmax: v98 };
-}
 
-/* ======== Canvas-Rasterizer ======== */
+/* ======== Canvas-Renderer (Kacheln, Perzentile) ======== */
 function renderToCanvas(cells, bounds){
-  var PX_W = 1536;
+  var PX_W = 1536; // ggf. 2048/3072 für noch glatter
   var widthDeg  = bounds.east - bounds.west;
   var heightDeg = bounds.north - bounds.south;
   var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
@@ -303,40 +338,51 @@ function renderToCanvas(cells, bounds){
   var lonPerPx = widthDeg / PX_W;
   var latPerPx = heightDeg / PX_H;
 
-  // --- Wertebereich robust bestimmen (2–98 %) ---
+  // Wertebereich robust (2–98 %)
   var vals = new Array(cells.length);
   for (var i=0;i<cells.length;i++) vals[i] = cells[i].v;
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
 
-  // Debug ins Console/Toast
-  console.log("RR Range (robust):", vmin, "…", vmax, "| N=", cells.length);
+  // Schrittweite schätzen und Punkte zu Kacheln aufblähen
+  var step = estimateGridStep(cells, bounds);
+  var halfDx = 0.5*step.dx, halfDy = 0.5*step.dy;
 
   var done = 0;
   for (var c=0;c<cells.length;c++){
     var cell = cells[c];
 
-    // Pixelrechteck aus Geo-BBOX
-    var minx = Math.max(0, Math.floor((cell.minx - bounds.west)/lonPerPx));
-    var maxx = Math.min(PX_W-1, Math.ceil ((cell.maxx - bounds.west)/lonPerPx));
-    var miny = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
-    var maxy = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
+    var cw = cell.maxx - cell.minx;
+    var ch = cell.maxy - cell.miny;
+    var minx = cell.minx, maxx = cell.maxx, miny = cell.miny, maxy = cell.maxy;
 
-    // Farbe
-    var col = colorFor(cell.v, vmin, vmax); // [r,g,b,255]
+    if (!(cw>1e-12 && ch>1e-12)){
+      var cx = 0.5*(cell.minx + cell.maxx);
+      var cy = 0.5*(cell.miny + cell.maxy);
+      minx = cx - halfDx; maxx = cx + halfDx;
+      miny = cy - halfDy; maxy = cy + halfDy;
+    }
+
+    var px0 = Math.max(0, Math.floor((minx - bounds.west)/lonPerPx));
+    var px1 = Math.min(PX_W-1, Math.ceil ((maxx - bounds.west)/lonPerPx));
+    var py0 = Math.max(0, Math.floor((bounds.north - maxy)/latPerPx));
+    var py1 = Math.min(PX_H-1, Math.ceil ((bounds.north - miny)/latPerPx));
+
+    if (px1 < px0 || py1 < py0) continue;
+
+    var col = colorFor(cell.v, vmin, vmax);
     var r = col[0], g = col[1], b = col[2], a = 255;
 
-    // Füllen
-    for (var y=miny; y<=maxy; y++){
-      var idx = (y*PX_W + minx)*4;
-      for (var x=minx; x<=maxx; x++){
+    for (var y=py0; y<=py1; y++){
+      var idx = (y*PX_W + px0)*4;
+      for (var x=px0; x<=px1; x++){
         data[idx]   = r; data[idx+1] = g; data[idx+2] = b; data[idx+3] = a;
         idx += 4;
       }
     }
 
     done++;
-    if ((done % 500) === 0) progress(done / cells.length);
+    if ((done % 1000) === 0) progress(done / cells.length);
   }
 
   ctx.putImageData(img, 0, 0);
@@ -407,7 +453,7 @@ document.getElementById('renderBtn').addEventListener('click', function(){
       var timestamps = fc.timestamps || [];
       var nt = timestamps.length;
 
-      // FC -> Zellen
+      // FC -> Zellen (Summe)
       var feats = fc.features || [];
       var cells = [];
       for (var i=0;i<feats.length;i++){
@@ -421,11 +467,12 @@ document.getElementById('renderBtn').addEventListener('click', function(){
         for (var j=0;j<vals.length;j++){ var vv = vals[j]; if (isFinite(vv)) sum += vv; }
         var bb = bboxFromGeom(geom);
         cells.push({ v: sum, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
-        if ((i % 500) === 0) progress(i / feats.length);
+        if ((i % 1000) === 0) progress(i / feats.length);
       }
 
       toast("Zellen: " + cells.length);
       var rr = renderToCanvas(cells, baseBoundsObj);
+      lastCanvas = rr.canvas;
       var url = rr.canvas.toDataURL("image/png");
 
       if (overlay) { try{ map.removeLayer(overlay); }catch(e){} }
@@ -440,6 +487,16 @@ document.getElementById('renderBtn').addEventListener('click', function(){
     console.error(e);
     alert("Fehler beim Laden/Rendern: " + (e && e.message ? e.message : e));
   }
+});
+
+/* ======== PNG-Download ======== */
+document.getElementById('dlPng').addEventListener('click', function(){
+  if (!lastCanvas){ toast("Bitte zuerst rendern"); return; }
+  var a = document.createElement('a');
+  var start = startEl.value || 'start', end = endEl.value || 'end';
+  a.download = 'noe_rr_sum_'+start+'_bis_'+end+'.png';
+  a.href = lastCanvas.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 });
 
 /* ======== Opazität & Bounds-Rahmen ======== */
