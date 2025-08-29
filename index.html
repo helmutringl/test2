@@ -199,7 +199,7 @@ function colorFor(v, vmin, vmax){
   return [rgb[0], rgb[1], rgb[2], 255];
 }
 
-/* ======== Stats/Quantile/Schrittweite ======== */
+/* ======== Stats/Quantile ======== */
 function quantile(sorted, q){
   if (!sorted.length) return NaN;
   var pos = (sorted.length - 1) * q;
@@ -218,39 +218,6 @@ function robustRange(vals){
   if (!isFinite(v2) || !isFinite(v98) || v98 <= v2) { v2 = arr[0]; v98 = arr[arr.length-1]; }
   if (v98 <= v2) { v98 = v2 + 1e-6; }
   return { vmin: v2, vmax: v98 };
-}
-function medianFrom(arr){
-  var a = []; for (var i=0;i<arr.length;i++) if (isFinite(arr[i])) a.push(arr[i]);
-  if (!a.length) return NaN;
-  a.sort(function(x,y){return x-y;});
-  var mid = 0.5*(a.length-1), lo = Math.floor(mid), hi = Math.ceil(mid);
-  return a[lo] + (mid-lo) * (a[hi]-a[lo]);
-}
-function estimateGridStep(cells, bounds){
-  var widths=[], heights=[], cx=[], cy=[];
-  for (var i=0;i<cells.length;i++){
-    var w = cells[i].maxx - cells[i].minx;
-    var h = cells[i].maxy - cells[i].miny;
-    if (w>0) widths.push(w);
-    if (h>0) heights.push(h);
-    var x = 0.5*(cells[i].minx + cells[i].maxx);
-    var y = 0.5*(cells[i].miny + cells[i].maxy);
-    cx.push(x); cy.push(y);
-  }
-  var dx = medianFrom(widths), dy = medianFrom(heights);
-  if (!isFinite(dx) || dx<=0){
-    cx.sort(function(a,b){return a-b;});
-    var difX=[]; for (var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if (d>0) difX.push(d); }
-    dx = medianFrom(difX);
-  }
-  if (!isFinite(dy) || dy<=0){
-    cy.sort(function(a,b){return a-b;});
-    var difY=[]; for (var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if (d2>0) difY.push(d2); }
-    dy = medianFrom(difY);
-  }
-  if (!isFinite(dx) || dx<=0){ dx = (bounds.east - bounds.west) / Math.max(1, Math.sqrt(cells.length)); }
-  if (!isFinite(dy) || dy<=0){ dy = (bounds.north - bounds.south) / Math.max(1, Math.sqrt(cells.length)); }
-  return { dx: dx*0.98, dy: dy*0.98 }; // leichte Überlappung
 }
 
 /* ======== FeatureCollection laden ======== */
@@ -320,9 +287,61 @@ function bboxFromGeom(geom){
   return [minx,miny,maxx,maxy];
 }
 
-/* ======== Canvas-Renderer (Kacheln, Perzentile) ======== */
+/* ======== Gitter-Schritt aus Pixelkoordinaten schätzen ======== */
+function medianFrom(arr){
+  var a = []; for (var i=0;i<arr.length;i++) if (isFinite(arr[i])) a.push(arr[i]);
+  if (!a.length) return NaN;
+  a.sort(function(x,y){return x-y;});
+  var mid = 0.5*(a.length-1), lo = Math.floor(mid), hi = Math.ceil(mid);
+  return a[lo] + (mid-lo) * (a[hi]-a[lo]);
+}
+function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx){
+  // 1) Wenn Polygone: nehme Median der Breiten/Höhen in Pixeln
+  var wpx=[], hpx=[], cx=[], cy=[];
+  for (var i=0;i<cells.length;i++){
+    var cw = (cells[i].maxx - cells[i].minx)/lonPerPx;
+    var ch = (cells[i].maxy - cells[i].miny)/latPerPx;
+    if (cw>0) wpx.push(cw);
+    if (ch>0) hpx.push(ch);
+    var cx_deg = 0.5*(cells[i].minx + cells[i].maxx);
+    var cy_deg = 0.5*(cells[i].miny + cells[i].maxy);
+    cx.push((cx_deg - bounds.west)/lonPerPx);
+    cy.push((bounds.north - cy_deg)/latPerPx);
+  }
+  var dx = medianFrom(wpx), dy = medianFrom(hpx);
+
+  // 2) Falls Punkte: Median der Abstände der Zentren in Pixeln
+  if (!isFinite(dx) || dx<=0){
+    cx.sort(function(a,b){return a-b;});
+    var difX=[]; for (var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if (d>0.25) difX.push(d); }
+    dx = medianFrom(difX);
+  }
+  if (!isFinite(dy) || dy<=0){
+    cy.sort(function(a,b){return a-b;});
+    var difY=[]; for (var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if (d2>0.25) difY.push(d2); }
+    dy = medianFrom(difY);
+  }
+
+  // 3) Fallback: aus N ableiten
+  if (!isFinite(dx) || dx<=0 || !isFinite(dy) || dy<=0){
+    // Ziel: N ≈ (PX_W/dx)*(PX_H/dy) -> dx ~ PX_W/sqrt(N*AR), dy ~ PX_H/sqrt(N/AR)
+    var PX_W = 1536; // muss zur Canvasbreite passen (wird unten ebenfalls verwendet)
+    var widthDeg  = bounds.east - bounds.west;
+    var heightDeg = bounds.north - bounds.south;
+    var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
+    var N = Math.max(1, cells.length);
+    var AR = PX_W / PX_H;
+    if (!isFinite(dx) || dx<=0) dx = PX_W / Math.sqrt(N * AR);
+    if (!isFinite(dy) || dy<=0) dy = PX_H / Math.sqrt(N / AR);
+  }
+
+  // leichte Überlappung
+  return { dx: Math.max(1, dx*1.05), dy: Math.max(1, dy*1.05) };
+}
+
+/* ======== Canvas-Renderer (Pixel-Kacheln, Perzentile) ======== */
 function renderToCanvas(cells, bounds){
-  var PX_W = 2048; // ggf. 2048/3072 für noch glatter
+  var PX_W = 1536; // bei Bedarf 2048/3072
   var widthDeg  = bounds.east - bounds.west;
   var heightDeg = bounds.north - bounds.south;
   var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
@@ -344,29 +363,39 @@ function renderToCanvas(cells, bounds){
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
 
-  // Schrittweite schätzen und Punkte zu Kacheln aufblähen
-  var step = estimateGridStep(cells, bounds);
-  var halfDx = 0.5*step.dx, halfDy = 0.5*step.dy;
+  // Schrittweite direkt in PIXELN schätzen
+  var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx);
+  var halfDxPx = stepPx.dx * 0.5;
+  var halfDyPx = stepPx.dy * 0.5;
 
   var done = 0;
   for (var c=0;c<cells.length;c++){
     var cell = cells[c];
 
-    var cw = cell.maxx - cell.minx;
-    var ch = cell.maxy - cell.miny;
-    var minx = cell.minx, maxx = cell.maxx, miny = cell.miny, maxy = cell.maxy;
+    // Rechteck in Pixelkoordinaten bestimmen
+    var px0, px1, py0, py1;
 
-    if (!(cw>1e-12 && ch>1e-12)){
-      var cx = 0.5*(cell.minx + cell.maxx);
-      var cy = 0.5*(cell.miny + cell.maxy);
-      minx = cx - halfDx; maxx = cx + halfDx;
-      miny = cy - halfDy; maxy = cy + halfDy;
+    var cw_px = (cell.maxx - cell.minx)/lonPerPx;
+    var ch_px = (cell.maxy - cell.miny)/latPerPx;
+
+    if (cw_px>1 && ch_px>1){
+      // echtes Polygon/BBox -> direkt umrechnen
+      px0 = Math.max(0, Math.floor((cell.minx - bounds.west)/lonPerPx));
+      px1 = Math.min(PX_W-1, Math.ceil ((cell.maxx - bounds.west)/lonPerPx));
+      py0 = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
+      py1 = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
+    } else {
+      // Punkt -> als Kachel um den Mittelpunkt aufblasen (Pixelmaß!)
+      var cx_deg = 0.5*(cell.minx + cell.maxx);
+      var cy_deg = 0.5*(cell.miny + cell.maxy);
+      var cx_px = (cx_deg - bounds.west)/lonPerPx;
+      var cy_px = (bounds.north - cy_deg)/latPerPx;
+
+      px0 = Math.max(0, Math.floor(cx_px - halfDxPx));
+      px1 = Math.min(PX_W-1, Math.ceil (cx_px + halfDxPx));
+      py0 = Math.max(0, Math.floor(cy_px - halfDyPx));
+      py1 = Math.min(PX_H-1, Math.ceil (cy_px + halfDyPx));
     }
-
-    var px0 = Math.max(0, Math.floor((minx - bounds.west)/lonPerPx));
-    var px1 = Math.min(PX_W-1, Math.ceil ((maxx - bounds.west)/lonPerPx));
-    var py0 = Math.max(0, Math.floor((bounds.north - maxy)/latPerPx));
-    var py1 = Math.min(PX_H-1, Math.ceil ((bounds.north - miny)/latPerPx));
 
     if (px1 < px0 || py1 < py0) continue;
 
@@ -382,7 +411,7 @@ function renderToCanvas(cells, bounds){
     }
 
     done++;
-    if ((done % 1000) === 0) progress(done / cells.length);
+    if ((done % 1500) === 0) progress(done / cells.length);
   }
 
   ctx.putImageData(img, 0, 0);
@@ -467,7 +496,7 @@ document.getElementById('renderBtn').addEventListener('click', function(){
         for (var j=0;j<vals.length;j++){ var vv = vals[j]; if (isFinite(vv)) sum += vv; }
         var bb = bboxFromGeom(geom);
         cells.push({ v: sum, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
-        if ((i % 1000) === 0) progress(i / feats.length);
+        if ((i % 1500) === 0) progress(i / feats.length);
       }
 
       toast("Zellen: " + cells.length);
