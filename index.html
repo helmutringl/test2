@@ -134,11 +134,11 @@
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
     <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live, ohne neuen Download)</span></div>
     <div class="row">
-      <label>X: <input type="range" id="tileX" min="50" max="200" value="100"> <span id="tileXVal">100%</span></label>
+      <label>X: <input type="range" id="tileX" min="200" max="500" step="5" value="200"> <span id="tileXVal">200%</span></label>
       <code id="tileXpx">– px</code>
     </div>
     <div class="row">
-      <label>Y: <input type="range" id="tileY" min="50" max="200" value="100"> <span id="tileYVal">100%</span></label>
+      <label>Y: <input type="range" id="tileY" min="200" max="500" step="5" value="200"> <span id="tileYVal">200%</span></label>
       <code id="tileYpx">– px</code>
     </div>
   </div>
@@ -150,7 +150,7 @@
 /* ======== Konfig ======== */
 var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
 var PARAM = "RR";
-var CANVAS_W = 1536; // 1536/2048/3072 — höhere Werte = glatter, aber langsamer
+var CANVAS_W = 1536; // 1536/2048/3072 — höher = glatter, langsamer
 
 /* ======== UI & Map ======== */
 function toast(msg){ var el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
@@ -186,7 +186,7 @@ var baseBounds = null;   // Leaflet LatLngBounds
 var baseBoundsObj = null;
 var lastCanvas = null;   // für Download
 var lastCells = null;    // für Re-Render ohne Download
-var lastStepPx = null;   // zur Anzeige der geschätzten Kachelgröße
+var lastStepPx = null;   // geschätzte Kachelgröße
 
 /* ======== Progress-Bar ======== */
 var bar = document.getElementById('bar');
@@ -348,8 +348,8 @@ var state = {
   shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
   scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
   scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
-  tileScaleX: Number(localStorage.getItem('ovTileScaleX') || 1) || 1,
-  tileScaleY: Number(localStorage.getItem('ovTileScaleY') || 1) || 1,
+  tileScaleX: Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 2) || 2), // min 200%
+  tileScaleY: Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2) || 2), // min 200%
 };
 var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
 var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
@@ -358,8 +358,13 @@ var tileXVal = document.getElementById('tileXVal'), tileYVal = document.getEleme
 var tileXpx = document.getElementById('tileXpx'), tileYpx = document.getElementById('tileYpx');
 
 function updateUI(){
+  // Clamp Tile-Scale 200–500 %
+  state.tileScaleX = Math.min(5, Math.max(2, state.tileScaleX));
+  state.tileScaleY = Math.min(5, Math.max(2, state.tileScaleY));
+
   pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
   wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1);
+
   tileX.value = String(Math.round(state.tileScaleX*100));
   tileY.value = String(Math.round(state.tileScaleY*100));
   tileXVal.textContent = Math.round(state.tileScaleX*100) + "%";
@@ -406,7 +411,7 @@ function renderToCanvas(cells, bounds){
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
 
-  // Kachelgröße in PIXELN (Auto) + manuelle Skalierung
+  // Kachelgröße in PIXELN (Auto) + manuelle Skalierung (200–500 %)
   var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, PX_W, PX_H);
   lastStepPx = stepPx; // für Anzeige & Slider-Labels
   var halfDxPx = Math.max(0.5, 0.5 * stepPx.dx * state.tileScaleX);
@@ -584,12 +589,12 @@ document.getElementById('hPlus').addEventListener('click', function(){ state.sca
 
 /* ======== Tile-Slider (live Re-Render) ======== */
 tileX.addEventListener('input', function(){
-  state.tileScaleX = Number(tileX.value)/100;
+  state.tileScaleX = Number(tileX.value)/100; // 2.0 … 5.0
   persist();
   rerenderSameData();
 });
 tileY.addEventListener('input', function(){
-  state.tileScaleY = Number(tileY.value)/100;
+  state.tileScaleY = Number(tileY.value)/100; // 2.0 … 5.0
   persist();
   rerenderSameData();
 });
@@ -599,7 +604,7 @@ updateUI();
 /* ======== Reset/Ansicht & Geolocation ======== */
 document.getElementById('reset').addEventListener('click', function(){
   state.shiftX = state.shiftY = 0; state.scaleW = state.scaleH = 0;
-  state.tileScaleX = state.tileScaleY = 1;
+  state.tileScaleX = state.tileScaleY = 2; // 200%
   persist();
   if (overlay) map.fitBounds((overlay._bounds || baseBounds).pad(0.1));
   if (lastCells) rerenderSameData();
