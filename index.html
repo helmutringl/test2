@@ -49,6 +49,7 @@
   label{font-size:12px}
   .hint{font-size:12px; opacity:.7}
   input[type="date"]{padding:4px 6px; border:1px solid #ddd; border-radius:6px; font:14px system-ui}
+  input[type="range"]{width:160px}
   .progress{height:6px; background:#eee; border-radius:999px; overflow:hidden; width:100%}
   .bar{height:100%; width:0%; background:#4f46e5; transition:width .15s}
 </style>
@@ -129,6 +130,17 @@
       <div><code id="hPct">0.0</code>&nbsp;%</div>
       <button class="kb" id="hPlus">H+</button>
     </div>
+
+    <div style="margin:6px 0;border-top:1px solid #eee"></div>
+    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live, ohne neuen Download)</span></div>
+    <div class="row">
+      <label>X: <input type="range" id="tileX" min="50" max="200" value="100"> <span id="tileXVal">100%</span></label>
+      <code id="tileXpx">– px</code>
+    </div>
+    <div class="row">
+      <label>Y: <input type="range" id="tileY" min="50" max="200" value="100"> <span id="tileYVal">100%</span></label>
+      <code id="tileYpx">– px</code>
+    </div>
   </div>
 
   <div id="toast"></div>
@@ -138,6 +150,7 @@
 /* ======== Konfig ======== */
 var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
 var PARAM = "RR";
+var CANVAS_W = 1536; // 1536/2048/3072 — höhere Werte = glatter, aber langsamer
 
 /* ======== UI & Map ======== */
 function toast(msg){ var el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
@@ -172,6 +185,8 @@ var rect = null;         // Debug-bounds rectangle
 var baseBounds = null;   // Leaflet LatLngBounds
 var baseBoundsObj = null;
 var lastCanvas = null;   // für Download
+var lastCells = null;    // für Re-Render ohne Download
+var lastStepPx = null;   // zur Anzeige der geschätzten Kachelgröße
 
 /* ======== Progress-Bar ======== */
 var bar = document.getElementById('bar');
@@ -287,7 +302,7 @@ function bboxFromGeom(geom){
   return [minx,miny,maxx,maxy];
 }
 
-/* ======== Gitter-Schritt aus Pixelkoordinaten schätzen ======== */
+/* ======== Gitter-Schritt in PIXELN schätzen ======== */
 function medianFrom(arr){
   var a = []; for (var i=0;i<arr.length;i++) if (isFinite(arr[i])) a.push(arr[i]);
   if (!a.length) return NaN;
@@ -295,8 +310,7 @@ function medianFrom(arr){
   var mid = 0.5*(a.length-1), lo = Math.floor(mid), hi = Math.ceil(mid);
   return a[lo] + (mid-lo) * (a[hi]-a[lo]);
 }
-function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx){
-  // 1) Wenn Polygone: nehme Median der Breiten/Höhen in Pixeln
+function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, pxW, pxH){
   var wpx=[], hpx=[], cx=[], cy=[];
   for (var i=0;i<cells.length;i++){
     var cw = (cells[i].maxx - cells[i].minx)/lonPerPx;
@@ -309,8 +323,6 @@ function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx){
     cy.push((bounds.north - cy_deg)/latPerPx);
   }
   var dx = medianFrom(wpx), dy = medianFrom(hpx);
-
-  // 2) Falls Punkte: Median der Abstände der Zentren in Pixeln
   if (!isFinite(dx) || dx<=0){
     cx.sort(function(a,b){return a-b;});
     var difX=[]; for (var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if (d>0.25) difX.push(d); }
@@ -321,27 +333,58 @@ function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx){
     var difY=[]; for (var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if (d2>0.25) difY.push(d2); }
     dy = medianFrom(difY);
   }
-
-  // 3) Fallback: aus N ableiten
   if (!isFinite(dx) || dx<=0 || !isFinite(dy) || dy<=0){
-    // Ziel: N ≈ (PX_W/dx)*(PX_H/dy) -> dx ~ PX_W/sqrt(N*AR), dy ~ PX_H/sqrt(N/AR)
-    var PX_W = 1536; // muss zur Canvasbreite passen (wird unten ebenfalls verwendet)
-    var widthDeg  = bounds.east - bounds.west;
-    var heightDeg = bounds.north - bounds.south;
-    var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
     var N = Math.max(1, cells.length);
-    var AR = PX_W / PX_H;
-    if (!isFinite(dx) || dx<=0) dx = PX_W / Math.sqrt(N * AR);
-    if (!isFinite(dy) || dy<=0) dy = PX_H / Math.sqrt(N / AR);
+    var AR = pxW / pxH;
+    if (!isFinite(dx) || dx<=0) dx = pxW / Math.sqrt(N * AR);
+    if (!isFinite(dy) || dy<=0) dy = pxH / Math.sqrt(N / AR);
   }
+  return { dx: Math.max(1, dx*1.05), dy: Math.max(1, dy*1.05) }; // leichte Überlappung
+}
 
-  // leichte Überlappung
-  return { dx: Math.max(1, dx*1.05), dy: Math.max(1, dy*1.05) };
+/* ======== Justage-/Tile-States ======== */
+var state = {
+  shiftX: Number(localStorage.getItem('ovShiftX') || 0) || 0,
+  shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
+  scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
+  scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
+  tileScaleX: Number(localStorage.getItem('ovTileScaleX') || 1) || 1,
+  tileScaleY: Number(localStorage.getItem('ovTileScaleY') || 1) || 1,
+};
+var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
+var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
+var tileX = document.getElementById('tileX'), tileY = document.getElementById('tileY');
+var tileXVal = document.getElementById('tileXVal'), tileYVal = document.getElementById('tileYVal');
+var tileXpx = document.getElementById('tileXpx'), tileYpx = document.getElementById('tileYpx');
+
+function updateUI(){
+  pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
+  wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1);
+  tileX.value = String(Math.round(state.tileScaleX*100));
+  tileY.value = String(Math.round(state.tileScaleY*100));
+  tileXVal.textContent = Math.round(state.tileScaleX*100) + "%";
+  tileYVal.textContent = Math.round(state.tileScaleY*100) + "%";
+  if (lastStepPx){
+    tileXpx.textContent = "≈ " + Math.round(lastStepPx.dx*state.tileScaleX) + " px";
+    tileYpx.textContent = "≈ " + Math.round(lastStepPx.dy*state.tileScaleY) + " px";
+  } else {
+    tileXpx.textContent = "– px";
+    tileYpx.textContent = "– px";
+  }
+}
+function persist(){
+  localStorage.setItem('ovShiftX', String(state.shiftX));
+  localStorage.setItem('ovShiftY', String(state.shiftY));
+  localStorage.setItem('ovScaleW', String(state.scaleW));
+  localStorage.setItem('ovScaleH', String(state.scaleH));
+  localStorage.setItem('ovTileScaleX', String(state.tileScaleX));
+  localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
+  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
 }
 
 /* ======== Canvas-Renderer (Pixel-Kacheln, Perzentile) ======== */
 function renderToCanvas(cells, bounds){
-  var PX_W = 1536; // bei Bedarf 2048/3072
+  var PX_W = CANVAS_W;
   var widthDeg  = bounds.east - bounds.west;
   var heightDeg = bounds.north - bounds.south;
   var PX_H = Math.max(1, Math.round(PX_W * (heightDeg/widthDeg)));
@@ -363,10 +406,11 @@ function renderToCanvas(cells, bounds){
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
 
-  // Schrittweite direkt in PIXELN schätzen
-  var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx);
-  var halfDxPx = stepPx.dx * 0.5;
-  var halfDyPx = stepPx.dy * 0.5;
+  // Kachelgröße in PIXELN (Auto) + manuelle Skalierung
+  var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, PX_W, PX_H);
+  lastStepPx = stepPx; // für Anzeige & Slider-Labels
+  var halfDxPx = Math.max(0.5, 0.5 * stepPx.dx * state.tileScaleX);
+  var halfDyPx = Math.max(0.5, 0.5 * stepPx.dy * state.tileScaleY);
 
   var done = 0;
   for (var c=0;c<cells.length;c++){
@@ -385,7 +429,7 @@ function renderToCanvas(cells, bounds){
       py0 = Math.max(0, Math.floor((bounds.north - cell.maxy)/latPerPx));
       py1 = Math.min(PX_H-1, Math.ceil ((bounds.north - cell.miny)/latPerPx));
     } else {
-      // Punkt -> als Kachel um den Mittelpunkt aufblasen (Pixelmaß!)
+      // Punkt -> als Kachel um den Mittelpunkt aufblasen (Pixelmaß + Slider)
       var cx_deg = 0.5*(cell.minx + cell.maxx);
       var cy_deg = 0.5*(cell.miny + cell.maxy);
       var cx_px = (cx_deg - bounds.west)/lonPerPx;
@@ -419,19 +463,9 @@ function renderToCanvas(cells, bounds){
   return { canvas: cvs, width: PX_W, height: PX_H };
 }
 
-/* ======== Overlay-Justage ======== */
-var state = {
-  shiftX: Number(localStorage.getItem('ovShiftX') || 0) || 0,
-  shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
-  scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
-  scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
-};
-var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
-var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
-function updateUI(){ pxX.textContent = state.shiftX; pxY.textContent = state.shiftY; wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1); }
-
+/* ======== Overlay anwenden ======== */
 function applyTransformOnOverlay(ov, base){
-  if (!ov || !ov._image) return;
+  if (!ov || !ov._image || !base) return;
   var B = base; var w0 = (B.east - B.west); var h0 = (B.north - B.south);
   var cx = B.west + w0/2, cy = B.south + h0/2;
 
@@ -456,15 +490,20 @@ function applyTransformOnOverlay(ov, base){
   if (rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
 }
 
-function persist(){
-  localStorage.setItem('ovShiftX', String(state.shiftX));
-  localStorage.setItem('ovShiftY', String(state.shiftY));
-  localStorage.setItem('ovScaleW', String(state.scaleW));
-  localStorage.setItem('ovScaleH', String(state.scaleH));
-  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
+/* ======== Render & Re-Render ======== */
+function placeOverlayFromCanvas(rr){
+  lastCanvas = rr.canvas;
+  var url = rr.canvas.toDataURL("image/png");
+  if (overlay) { try{ map.removeLayer(overlay); }catch(e){} }
+  overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
+  overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
 }
-
-/* ======== Render-Button ======== */
+function rerenderSameData(){
+  if (!lastCells || !baseBoundsObj){ toast("Bitte erst laden"); return; }
+  progress(0.05);
+  var rr = renderToCanvas(lastCells, baseBoundsObj);
+  placeOverlayFromCanvas(rr);
+}
 document.getElementById('renderBtn').addEventListener('click', function(){
   progress(0); toast("Lade Daten …");
   try{
@@ -498,15 +537,11 @@ document.getElementById('renderBtn').addEventListener('click', function(){
         cells.push({ v: sum, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
         if ((i % 1500) === 0) progress(i / feats.length);
       }
+      lastCells = cells.slice(0); // speichern für Re-Render
 
       toast("Zellen: " + cells.length);
       var rr = renderToCanvas(cells, baseBoundsObj);
-      lastCanvas = rr.canvas;
-      var url = rr.canvas.toDataURL("image/png");
-
-      if (overlay) { try{ map.removeLayer(overlay); }catch(e){} }
-      overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
-      overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); });
+      placeOverlayFromCanvas(rr);
       map.fitBounds(baseBounds.pad(0.1));
     }).catch(function(err){
       console.error(err);
@@ -537,7 +572,7 @@ document.getElementById('showBounds').addEventListener('change', function(){
   else { if (rect) { map.removeLayer(rect); rect = null; } }
 });
 
-/* ======== Justage-UI ======== */
+/* ======== Justage-Buttons ======== */
 document.getElementById('left').addEventListener('click',  function(){ state.shiftX -= 1; persist(); });
 document.getElementById('right').addEventListener('click', function(){ state.shiftX += 1; persist(); });
 document.getElementById('up').addEventListener('click',    function(){ state.shiftY += 1; persist(); });
@@ -546,12 +581,29 @@ document.getElementById('wMinus').addEventListener('click',function(){ state.sca
 document.getElementById('wPlus').addEventListener('click', function(){ state.scaleW += 0.5; persist(); });
 document.getElementById('hMinus').addEventListener('click',function(){ state.scaleH -= 0.5; persist(); });
 document.getElementById('hPlus').addEventListener('click', function(){ state.scaleH += 0.5; persist(); });
+
+/* ======== Tile-Slider (live Re-Render) ======== */
+tileX.addEventListener('input', function(){
+  state.tileScaleX = Number(tileX.value)/100;
+  persist();
+  rerenderSameData();
+});
+tileY.addEventListener('input', function(){
+  state.tileScaleY = Number(tileY.value)/100;
+  persist();
+  rerenderSameData();
+});
+
 updateUI();
 
 /* ======== Reset/Ansicht & Geolocation ======== */
 document.getElementById('reset').addEventListener('click', function(){
   state.shiftX = state.shiftY = 0; state.scaleW = state.scaleH = 0;
-  persist(); if (overlay) map.fitBounds((overlay._bounds || baseBounds).pad(0.1)); toast("Zurückgesetzt");
+  state.tileScaleX = state.tileScaleY = 1;
+  persist();
+  if (overlay) map.fitBounds((overlay._bounds || baseBounds).pad(0.1));
+  if (lastCells) rerenderSameData();
+  toast("Zurückgesetzt");
 });
 
 var watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
