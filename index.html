@@ -10,8 +10,8 @@
     .ui{position:absolute;z-index:1000;background:#fff;padding:6px 10px;border-radius:8px;
         box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,-apple-system,Segoe UI,Roboto}
     #loc{top:12px;left:12px}
-    #op{top:12px;right:12px}
     #reset{top:58px;left:12px}
+    #panel{top:12px;right:12px}
     label{font-size:12px}
     #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:1001;
            background:#111;color:#fff;padding:8px 12px;border-radius:8px;opacity:.92;display:none}
@@ -22,111 +22,136 @@
 
   <button class="ui" id="loc">📍 Meine Position</button>
   <button class="ui" id="reset">↺ Ansicht</button>
-  <div class="ui" id="op">
-    <label>Overlay <input type="range" id="opacity" min="30" max="100" value="85"> <span id="ovv">85%</span></label>
+  <div class="ui" id="panel">
+    <div><label>Overlay <input type="range" id="opacity" min="30" max="100" value="85"> <span id="ovv">85%</span></label></div>
+    <div style="margin-top:6px"><label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label></div>
   </div>
   <div id="toast"></div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
   <script>
-  // ======= <<< HIER ANPASSEN >>> ===========================================
-  // PNG-Dateiname exakt wie im Repo (gleiches Verzeichnis wie index.html)
+  // ==== KONFIGURATION =========================================================
+  // PNG liegt im selben Ordner wie diese Datei (Root oder docs/, je nach Pages)
   const PNG_URL = "noe_rr_sum_2025-08-14_bis_2025-08-27.png";
-  // Bounds aus deinem Python-Export (south/west/north/east)
-  const BOUNDS = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
-  // ========================================================================
 
-  const toast = (msg) => {
-    const el = document.getElementById('toast');
-    el.textContent = msg; el.style.display = 'block';
-    clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 3500);
-  };
+  // Fallback-Bounds, falls overlay_bounds.json nicht vorhanden ist:
+  // (south, west, north, east) — hier bei Bedarf eigene Werte eintragen
+  const FALLBACK_BOUNDS = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
+  // ============================================================================
+  const toast = (msg) => { const el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
+                           clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 3000); };
 
-  // Karte + Basemap
   const map = L.map('map', { zoomControl: true });
-  const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
     maxZoom: 19, attribution: '&copy; OpenStreetMap'
   }).addTo(map);
 
-  // Overlay
-  const imgBounds = L.latLngBounds([BOUNDS.south,BOUNDS.west],[BOUNDS.north,BOUNDS.east]);
-  const overlay = L.imageOverlay(PNG_URL, imgBounds, { opacity: 0.85, crossOrigin: '' }).addTo(map);
-  overlay.on('load', () => toast('Overlay geladen'));
-  overlay.on('error', () => toast('Overlay nicht gefunden – Dateiname/Ort prüfen'));
-  map.fitBounds(imgBounds.pad(0.1));
-
-  // Opacity UI
-  const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
-  const setOp = () => { const v = Number(op.value)/100; overlay.setOpacity(v); ovv.textContent = op.value+'%'; };
-  op.addEventListener('input', setOp); setOp();
-
-  // Ansicht zurücksetzen
-  document.getElementById('reset').addEventListener('click', ()=> map.fitBounds(imgBounds.pad(0.1)));
-
-  // Geolocation: erst einmalig getCurrentPosition (Prompt), dann watchPosition
-  let watchId = null, gpsMarker = null;
-  function startWatch(){
-    if (watchId !== null) return;
-    watchId = navigator.geolocation.watchPosition(pos => {
-      const { latitude, longitude } = pos.coords;
-      if (!gpsMarker) {
-        gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
-      }
-      gpsMarker.setLatLng([latitude, longitude]);
-    }, err => {
-      if (err.code === err.PERMISSION_DENIED) {
-        toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
-      } else {
-        toast("GPS-Fehler: " + err.message);
-      }
-    }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
-  }
-
-  async function requestOnceThenWatch(){
-    // iOS zeigt den Prompt zuverlässiger bei getCurrentPosition
+  async function loadBounds() {
     try {
-      await new Promise((res, rej) => {
-        navigator.geolocation.getCurrentPosition(() => res(), e => rej(e),
-          { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
-      });
-      startWatch();
-      document.getElementById('loc').textContent = "📍 GPS aktiv";
-      toast("GPS aktiv");
-    } catch (e) {
-      if (e && e.code === e.PERMISSION_DENIED) {
-        toast("Standort blockiert. In iOS freigeben (Ortungsdienste/Safari-Websites).");
-      } else {
-        toast("GPS-Fehler: " + (e?.message || e));
-      }
-    }
+      const r = await fetch('overlay_bounds.json', { cache: 'no-store' });
+      if (!r.ok) throw new Error('no json');
+      const b = await r.json();
+      if (['south','west','north','east'].every(k => typeof b[k] === 'number')) return b;
+    } catch(_){}
+    return FALLBACK_BOUNDS;
   }
 
-  document.getElementById('loc').addEventListener('click', () => {
-    if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
-    if (watchId === null) {
-      requestOnceThenWatch();
-    } else {
-      navigator.geolocation.clearWatch(watchId);
-      watchId = null;
-      if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
-      document.getElementById('loc').textContent = "📍 Meine Position";
-      toast("GPS aus");
-    }
-  });
+  (async function init(){
+    const B = await loadBounds();
 
-  // Manuelle Positionshilfe: Tippen setzt verschiebbaren Marker (falls GPS abgelehnt)
-  let manual = null;
-  map.on('click', (e) => {
-    const { lat, lng } = e.latlng;
-    if (!manual) {
-      manual = L.marker([lat, lng], { draggable: true }).addTo(map).bindPopup("Manuell gesetzt");
-    } else {
-      manual.setLatLng([lat, lng]);
-    }
-  });
+    const imgBounds = L.latLngBounds([B.south, B.west], [B.north, B.east]);
+    let rect; // optionaler Bounds-Rahmen
 
-  // Hard-Refresh verhindern, wenn Cache Ärger macht
-  // (Beim Testen ggf. URL mit ?v=2 aufrufen)
+    // PNG ggf. mit Cache-Buster laden
+    const overlay = L.imageOverlay(PNG_URL + '?v=' + Date.now(), imgBounds, { opacity: 0.85, crossOrigin: '' }).addTo(map);
+    overlay.on('load', () => toast('Overlay geladen'));
+    overlay.on('error', () => toast('Overlay nicht gefunden – Dateiname/Ort prüfen'));
+    map.fitBounds(imgBounds.pad(0.1));
+
+    // Opacity
+    const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
+    const setOp = () => { const v = Number(op.value)/100; overlay.setOpacity(v); ovv.textContent = op.value + '%'; };
+    op.addEventListener('input', setOp); setOp();
+
+    // Bounds-Rahmen toggeln
+    const showBounds = document.getElementById('showBounds');
+    showBounds.addEventListener('change', () => {
+      if (showBounds.checked) {
+        rect = L.rectangle(imgBounds, { color: 'red', weight: 1 }).addTo(map);
+      } else if (rect) {
+        map.removeLayer(rect); rect = null;
+      }
+    });
+
+    // Ansicht zurücksetzen
+    document.getElementById('reset').addEventListener('click', ()=> map.fitBounds(imgBounds.pad(0.1)));
+
+    // Geolocation: erst getCurrentPosition (Prompt), dann watchPosition
+    let watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
+
+    function startWatch(){
+      if (watchId !== null) return;
+      watchId = navigator.geolocation.watchPosition(pos => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        if (!gpsMarker) {
+          gpsMarker = L.marker([latitude, longitude]).addTo(map).bindPopup("Du bist hier");
+        }
+        gpsMarker.setLatLng([latitude, longitude]);
+        if (accCircle) map.removeLayer(accCircle);
+        accCircle = L.circle([latitude, longitude], accuracy, {opacity:0.6, fillOpacity:0.08}).addTo(map);
+        if (firstFix) { map.setView([latitude, longitude], Math.max(map.getZoom(), 12)); firstFix = false; }
+      }, err => {
+        if (err.code === err.PERMISSION_DENIED) {
+          toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+        } else {
+          toast("GPS-Fehler: " + err.message);
+        }
+      }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+    }
+
+    async function requestOnceThenWatch(){
+      try {
+        await new Promise((res, rej) => {
+          navigator.geolocation.getCurrentPosition(() => res(), e => rej(e),
+            { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
+        });
+        startWatch();
+        document.getElementById('loc').textContent = "📍 GPS aktiv";
+        toast("GPS aktiv");
+      } catch (e) {
+        if (e && e.code === e.PERMISSION_DENIED) {
+          toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
+        } else {
+          toast("GPS-Fehler: " + (e?.message || e));
+        }
+      }
+    }
+
+    document.getElementById('loc').addEventListener('click', () => {
+      if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
+      if (watchId === null) {
+        requestOnceThenWatch();
+      } else {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null; firstFix = true;
+        if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; }
+        if (accCircle) { map.removeLayer(accCircle); accCircle = null; }
+        document.getElementById('loc').textContent = "📍 Meine Position";
+        toast("GPS aus");
+      }
+    });
+
+    // Manuelle Positionshilfe (bei verweigertem GPS): Tipp auf Karte setzt Marker
+    let manual = null;
+    map.on('click', (e) => {
+      const { lat, lng } = e.latlng;
+      if (!manual) {
+        manual = L.marker([lat, lng], { draggable: true }).addTo(map).bindPopup("Manuell gesetzt");
+      } else {
+        manual.setLatLng([lat, lng]);
+      }
+    });
+  })();
   </script>
 </body>
 </html>
