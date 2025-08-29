@@ -527,14 +527,19 @@ function placeOverlayFromCanvas(rr){
   overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
   overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
 }
+
 function rerenderSameData(){
   if (!lastCells || !baseBoundsObj){ toast("Bitte erst laden"); return; }
   progress(0.05);
   var rr = renderToCanvas(lastCells, baseBoundsObj);
   placeOverlayFromCanvas(rr);
 }
-document.getElementById('renderBtn').addEventListener('click', function(){
-  progress(0); toast("Lade Daten …");
+
+/* Extrahiert die Logik aus dem Button-Handler, damit wir sie beim Load wiederverwenden */
+function renderOverlay(opts){
+  opts = opts || {};
+  progress(0);
+  if (!opts.silent) toast("Lade Daten …");
   try{
     var start = startEl.value; var end = endEl.value;
     var bboxStr = document.getElementById('bbox').value.trim();
@@ -562,10 +567,10 @@ document.getElementById('renderBtn').addEventListener('click', function(){
       }
       lastCells = cells.slice(0);
 
-      toast("Zellen: " + cells.length);
+      if (!opts.silent) toast("Zellen: " + cells.length);
       var rr = renderToCanvas(cells, baseBoundsObj);
       placeOverlayFromCanvas(rr);
-      map.fitBounds(baseBounds.pad(0.1));
+      if (opts.fit !== false) map.fitBounds(baseBounds.pad(0.1));
     }).catch(function(err){
       console.error(err);
       alert("Fehler beim Laden/Rendern: " + (err && err.message ? err.message : err));
@@ -574,7 +579,9 @@ document.getElementById('renderBtn').addEventListener('click', function(){
     console.error(e);
     alert("Fehler beim Laden/Rendern: " + (e && e.message ? e.message : e));
   }
-});
+}
+
+document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
 
 /* ======== PNG-Download ======== */
 document.getElementById('dlPng').addEventListener('click', function(){
@@ -665,7 +672,6 @@ closeChartBtn.addEventListener('click', function(){
 function kmToDegLat(km){ return km / 111.0; }
 function kmToDegLon(km, lat){ return km / (111.320*Math.cos(lat*Math.PI/180)); }
 
-/* Kleine BBOX um Klickpunkt, um eine Handvoll Zellen zu bekommen */
 function buildPointBBox(lat, lon){
   var halfKm = 2.0; // ~2 km
   var dLat = kmToDegLat(halfKm);
@@ -700,28 +706,17 @@ function fetchPointTimeseries(lat, lon, start, end){
 }
 
 function openChart(lat, lon, timestamps, values){
-  // Labels als lokale YYYY-MM-DD
-  var labels = timestamps.map(function(iso){
-    return iso.slice(0,10);
-  });
-  // Summe/Min/Max
+  var labels = timestamps.map(function(iso){ return iso.slice(0,10); });
   var sum = 0, vmin = Infinity, vmax = -Infinity;
   for (var i=0;i<values.length;i++){
     var v = Number(values[i]); if (!isFinite(v)) v = 0;
     sum += v; if (v<vmin) vmin=v; if (v>vmax) vmax=v;
   }
 
-  // Chart bauen/ersetzen
   if (pointChart){ pointChart.destroy(); pointChart = null; }
   pointChart = new Chart(chartCanvas.getContext('2d'), {
     type: 'bar',
-    data: {
-      labels: labels,
-      datasets: [{
-        label: 'RR (mm/Tag)',
-        data: values,
-      }]
-    },
+    data: { labels: labels, datasets: [{ label: 'RR (mm/Tag)', data: values }] },
     options: {
       responsive: true,
       animation: { duration: 200 },
@@ -731,9 +726,7 @@ function openChart(lat, lon, timestamps, values){
       },
       plugins: {
         legend: { display: false },
-        tooltip: { callbacks: {
-          label: function(ctx){ return (ctx.raw ?? 0).toFixed(1) + ' mm'; }
-        } }
+        tooltip: { callbacks: { label: function(ctx){ return (ctx.raw ?? 0).toFixed(1) + ' mm'; } } }
       }
     }
   });
@@ -761,6 +754,12 @@ map.on('click', function(e){
     console.error(err);
     alert("Zeitreihe fehlgeschlagen: " + (err && err.message ? err.message : err));
   });
+});
+
+/* ======== Auto-Render beim Laden ======== */
+window.addEventListener('load', function(){
+  // etwas warten, bis Map & UI initialisiert sind
+  setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150);
 });
 </script>
 </body>
