@@ -11,10 +11,11 @@
         box-shadow:0 2px 8px rgba(0,0,0,.2);font-family:system-ui,-apple-system,Segoe UI,Roboto}
     #loc{top:12px;left:12px}
     #reset{top:58px;left:12px}
-    #panel{top:12px;right:12px;min-width:210px}
-    #panel .row{display:flex;align-items:center;gap:8px;margin-top:6px}
+    #panel{top:12px;right:12px;min-width:260px}
+    #panel .row{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
     #panel .row small{opacity:.7}
-    #panel button.kb{width:28px;height:28px;border:1px solid #ddd;border-radius:6px;background:#fafafa}
+    #panel button.kb{min-width:30px;height:28px;border:1px solid #ddd;border-radius:6px;background:#fafafa}
+    #panel code{background:#f3f3f3;padding:1px 6px;border-radius:4px}
     label{font-size:12px}
     #toast{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);z-index:1001;
            background:#111;color:#fff;padding:8px 12px;border-radius:8px;opacity:.92;display:none}
@@ -24,21 +25,45 @@
   <div id="map"></div>
 
   <button class="ui" id="loc">📍 Meine Position</button>
-  <button class="ui" id="reset">↺ Ansicht</button>
+  <button class="ui" id="reset">↺ Ansicht/Reset</button>
 
   <div class="ui" id="panel">
     <div class="row">
       <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="85">
         <span id="ovv">85%</span></label>
     </div>
+
     <div class="row">
       <label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label>
     </div>
+
     <div class="row">
-      <small>Feinjustierung X:</small>
+      <small>Shift X:</small>
       <button class="kb" id="left">←</button>
-      <div><code id="pxVal">0</code>&nbsp;px</div>
+      <div><code id="pxX">0</code>&nbsp;px</div>
       <button class="kb" id="right">→</button>
+    </div>
+
+    <div class="row">
+      <small>Shift Y:</small>
+      <button class="kb" id="up">↑</button>
+      <div><code id="pxY">0</code>&nbsp;px</div>
+      <button class="kb" id="down">↓</button>
+      <small style="opacity:.6">(↑ = nach Norden)</small>
+    </div>
+
+    <div class="row">
+      <small>Breite (W):</small>
+      <button class="kb" id="wMinus">W−</button>
+      <div><code id="wPct">0.0</code>&nbsp;%</div>
+      <button class="kb" id="wPlus">W+</button>
+    </div>
+
+    <div class="row">
+      <small>Höhe (H):</small>
+      <button class="kb" id="hMinus">H−</button>
+      <div><code id="hPct">0.0</code>&nbsp;%</div>
+      <button class="kb" id="hPlus">H+</button>
     </div>
   </div>
 
@@ -47,18 +72,14 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
   <script>
   // ===== KONFIG ==============================================================
-  // PNG liegt im gleichen Ordner wie diese Datei (Root oder docs/, je nach Pages)
   const PNG_URL = "noe_rr_sum_2025-08-14_bis_2025-08-27.png";
-
-  // Fallback-Bounds, falls overlay_bounds.json fehlt
   const FALLBACK_BOUNDS = { south: 47.399564822, west: 14.430844322, north: 49.044548178, east: 17.095640678 };
-
-  // initialer Pixel-Shift (kannst du hier fest vorgeben)
-  const DEFAULT_SHIFT_PX = 0;
+  const DEFAULTS = { shiftX: 0, shiftY: 0, scaleW: 0.0, scaleH: 0.0 }; // px, px, %, %
+  const STEP = { shift: 1, scale: 0.5 }; // 1 px / 0.5 %
   // ===========================================================================
 
   const toast = (msg) => { const el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
-                           clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 2600); };
+                           clearTimeout(el._t); el._t = setTimeout(()=> el.style.display='none', 2200); };
 
   const map = L.map('map', { zoomControl: true });
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
@@ -76,83 +97,129 @@
   }
 
   (async function init(){
-    const B = await loadBounds();
+    const base = await loadBounds();
+    const baseBounds = L.latLngBounds([base.south, base.west], [base.north, base.east]);
 
-    // Basis-Bounds (unverschoben)
-    const baseBounds = L.latLngBounds([B.south, B.west], [B.north, B.east]);
-    let rect; // optionaler roter Bounds-Rahmen
+    // UI refs
+    const pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
+    const wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
+    const btn = {
+      left:  document.getElementById('left'),
+      right: document.getElementById('right'),
+      up:    document.getElementById('up'),
+      down:  document.getElementById('down'),
+      wMinus:document.getElementById('wMinus'),
+      wPlus: document.getElementById('wPlus'),
+      hMinus:document.getElementById('hMinus'),
+      hPlus: document.getElementById('hPlus'),
+    };
 
-    // Overlay anlegen (mit Cache-Buster)
+    // State (mit Persistenz)
+    let state = {
+      shiftX: Number(localStorage.getItem('ovShiftX') ?? DEFAULTS.shiftX) || 0,
+      shiftY: Number(localStorage.getItem('ovShiftY') ?? DEFAULTS.shiftY) || 0,
+      scaleW: Number(localStorage.getItem('ovScaleW') ?? DEFAULTS.scaleW) || 0,
+      scaleH: Number(localStorage.getItem('ovScaleH') ?? DEFAULTS.scaleH) || 0,
+    };
+    const updateUI = () => { pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
+                             wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1); };
+
     const overlay = L.imageOverlay(PNG_URL + '?v=' + Date.now(), baseBounds, { opacity: 0.85, crossOrigin: '' }).addTo(map);
     map.fitBounds(baseBounds.pad(0.1));
-    overlay.on('load', () => toast('Overlay geladen'));
+    overlay.on('load', () => { toast('Overlay geladen'); applyTransform(); });
     overlay.on('error', () => toast('Overlay nicht gefunden – Dateiname/Ort prüfen'));
 
-    // Opazität
+    // Transparenz
     const op = document.getElementById('opacity'), ovv = document.getElementById('ovv');
     const setOp = () => { const v = Number(op.value)/100; overlay.setOpacity(v); ovv.textContent = op.value + '%'; };
     op.addEventListener('input', setOp); setOp();
 
-    // === Horizontale Feinjustierung (Pixel -> Längengrad) ===================
-    const pxVal = document.getElementById('pxVal');
-    const btnL = document.getElementById('left');
-    const btnR = document.getElementById('right');
+    // Bounds-Rahmen
+    const showBounds = document.getElementById('showBounds');
+    let rect = null;
 
-    let shiftPx = Number(localStorage.getItem('overlayShiftPx') ?? DEFAULT_SHIFT_PX) || 0;
-    pxVal.textContent = shiftPx;
+    function applyTransform() {
+      // Basis-Daten
+      const B = base;
+      const wdeg0 = (B.east - B.west);
+      const hdeg0 = (B.north - B.south);
+      const cx = B.west + wdeg0/2;
+      const cy = B.south + hdeg0/2;
 
-    function applyShift(px) {
-      // Bildbreite auslesen → Grad/Pixel
-      const wpx = overlay._image?.naturalWidth || 0;
-      if (!wpx) return; // erst anwenden, wenn Bild geladen ist
-      const lonPerPx = (B.east - B.west) / wpx;
-      const dLon = px * lonPerPx;
+      // Skaliere Breite/Höhe (in %), zentriert
+      const wdeg = wdeg0 * (1 + state.scaleW / 100);
+      const hdeg = hdeg0 * (1 + state.scaleH / 100);
 
-      const adj = L.latLngBounds(
-        [B.south, B.west + dLon],
-        [B.north, B.east  + dLon]
-      );
+      // Pixel -> Grad (für Verschiebung)
+      const wpx = overlay._image?.naturalWidth  || 0;
+      const hpx = overlay._image?.naturalHeight || 0;
+      const lonPerPx = wpx ? (wdeg0 / wpx) : 0;   // Verschiebung bezieht sich auf Originalbreite!
+      const latPerPx = hpx ? (hdeg0 / hpx) : 0;
+
+      const dLon = state.shiftX * lonPerPx;
+      const dLat = state.shiftY * latPerPx; // +Y = Richtung Norden (↑)
+
+      // Neu berechnete Bounds
+      const west  = (cx - wdeg/2) + dLon;
+      const east  = (cx + wdeg/2) + dLon;
+      const south = (cy - hdeg/2) + dLat;
+      const north = (cy + hdeg/2) + dLat;
+
+      const adj = L.latLngBounds([south, west], [north, east]);
       overlay.setBounds(adj);
 
-      if (rect && document.getElementById('showBounds').checked) {
-        // den Rahmen auf die aktuell gesetzten Bounds legen
-        rect.setBounds(adj);
-      }
+      if (rect && showBounds.checked) rect.setBounds(adj);
     }
 
-    const runApply = () => { pxVal.textContent = String(shiftPx); localStorage.setItem('overlayShiftPx', String(shiftPx)); applyShift(shiftPx); };
+    // Buttons/Keys
+    btn.left.addEventListener('click',  () => { state.shiftX -= STEP.shift; persist(); });
+    btn.right.addEventListener('click', () => { state.shiftX += STEP.shift; persist(); });
+    btn.up.addEventListener('click',    () => { state.shiftY += STEP.shift; persist(); });
+    btn.down.addEventListener('click',  () => { state.shiftY -= STEP.shift; persist(); });
 
-    // Beim ersten Bild-Ladevorgang anwenden
-    overlay.once('load', runApply);
+    btn.wMinus.addEventListener('click', () => { state.scaleW -= STEP.scale; persist(); });
+    btn.wPlus .addEventListener('click', () => { state.scaleW += STEP.scale; persist(); });
+    btn.hMinus.addEventListener('click', () => { state.scaleH -= STEP.scale; persist(); });
+    btn.hPlus .addEventListener('click', () => { state.scaleH += STEP.scale; persist(); });
 
-    // Buttons
-    btnL.addEventListener('click', () => { shiftPx -= 1; runApply(); });
-    btnR.addEventListener('click', () => { shiftPx += 1; runApply(); });
-
-    // Optional: Pfeiltasten ←/→ auf Desktop
     window.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowLeft') { shiftPx -= 1; runApply(); }
-      if (e.key === 'ArrowRight'){ shiftPx += 1; runApply(); }
+      if (e.key === 'ArrowLeft')  { state.shiftX -= STEP.shift; persist(); }
+      if (e.key === 'ArrowRight') { state.shiftX += STEP.shift; persist(); }
+      if (e.key === 'ArrowUp')    { state.shiftY += STEP.shift; persist(); }
+      if (e.key === 'ArrowDown')  { state.shiftY -= STEP.shift; persist(); }
+      if (e.key === 'w')          { state.scaleW += STEP.scale; persist(); }
+      if (e.key === 'W')          { state.scaleW -= STEP.scale; persist(); }
+      if (e.key === 'h')          { state.scaleH += STEP.scale; persist(); }
+      if (e.key === 'H')          { state.scaleH -= STEP.scale; persist(); }
     });
 
-    // === Bounds-Rahmen toggeln ==============================================
-    const showBounds = document.getElementById('showBounds');
+    function persist() {
+      localStorage.setItem('ovShiftX', String(state.shiftX));
+      localStorage.setItem('ovShiftY', String(state.shiftY));
+      localStorage.setItem('ovScaleW', String(state.scaleW));
+      localStorage.setItem('ovScaleH', String(state.scaleH));
+      updateUI(); applyTransform();
+    }
+    updateUI();
+
     showBounds.addEventListener('change', () => {
       if (showBounds.checked) {
-        // Rahmen über den aktuell gesetzten Overlay-Bounds zeichnen
-        const current = overlay._bounds || baseBounds;
-        rect = L.rectangle(current, { color: 'red', weight: 1 }).addTo(map);
+        rect = L.rectangle(overlay._bounds || baseBounds, { color: 'red', weight: 1 }).addTo(map);
       } else if (rect) {
         map.removeLayer(rect); rect = null;
       }
     });
 
-    // Ansicht zurücksetzen
-    document.getElementById('reset').addEventListener('click', ()=> map.fitBounds((overlay._bounds || baseBounds).pad(0.1)));
+    // Reset/Ansicht-Button
+    document.getElementById('reset').addEventListener('click', () => {
+      state = { ...DEFAULTS };
+      persist();
+      map.fitBounds((overlay._bounds || baseBounds).pad(0.1));
+      toast("Zurückgesetzt");
+    });
 
-    // === Geolocation: einmaliger Prompt, dann Watch =========================
+    // === Geolocation (Prompt einmalig, dann Watch) ===========================
     let watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
-
     function startWatch(){
       if (watchId !== null) return;
       watchId = navigator.geolocation.watchPosition(pos => {
@@ -172,7 +239,6 @@
         }
       }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
     }
-
     async function requestOnceThenWatch(){
       try {
         await new Promise((res, rej) => {
@@ -190,7 +256,6 @@
         }
       }
     }
-
     document.getElementById('loc').addEventListener('click', () => {
       if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
       if (watchId === null) {
