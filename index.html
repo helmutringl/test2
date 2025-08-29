@@ -10,7 +10,7 @@
   :root{ --pad: max(12px, env(safe-area-inset-top, 0)); }
   html,body,#map{height:100%;margin:0}
   .stack-left{
-    position:fixed; z-index:1000;
+    position:fixed; z-index:1100; /* über Leaflet Controls */
     top: calc(env(safe-area-inset-top, 0) + 12px);
     left: calc(env(safe-area-inset-left, 0) + 12px);
     display:flex; flex-direction:column; gap:8px;
@@ -40,7 +40,7 @@
   }
   #drawer.open{ transform:none; }
   #drawer .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
-  #drawer .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa }
+  #drawer .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa; cursor:pointer }
   #drawer code{ background:#f3f3f3; padding:1px 6px; border-radius:4px }
   #toast{
     position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:1002;
@@ -71,6 +71,14 @@
   #chartBody{ padding:8px 12px 12px 12px; }
   #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
   #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
+
+  /* Legende unten rechts */
+  .leaflet-control.legend {
+    background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5;
+    box-shadow:0 2px 8px rgba(0,0,0,.12); font-family:system-ui,-apple-system,Segoe UI,Roboto;
+  }
+  #legendCanvas{ display:block; width:240px; height:12px; image-rendering:pixelated; }
+  .legend-row{ display:flex; justify-content:space-between; margin-top:4px; font-size:12px; }
 </style>
 </head>
 <body>
@@ -153,11 +161,11 @@
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
     <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live, ohne neuen Download)</span></div>
     <div class="row">
-      <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="600"> <span id="tileXVal">200%</span></label>
+      <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="200"> <span id="tileXVal">200%</span></label>
       <code id="tileXpx">– px</code>
     </div>
     <div class="row">
-      <label>Y: <input type="range" id="tileY" min="200" max="500" step="5" value="200"> <span id="tileYVal">200%</span></label>
+      <label>Y: <input type="range" id="tileY" min="200" max="600" step="5" value="200"> <span id="tileYVal">200%</span></label>
       <code id="tileYpx">– px</code>
     </div>
   </div>
@@ -190,10 +198,9 @@ var CANVAS_W = 1536; // 1536/2048/3072 — höher = glatter, langsamer
 function toast(msg){ var el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
                      clearTimeout(el._t); el._t = setTimeout(function(){ el.style.display='none'; }, 2200); }
 
-// var map = L.map('map', { zoomControl: true });
-var map = L.map('map', { zoomControl: false });
-
+var map = L.map('map', { zoomControl: false }); // Zoom oben links deaktiviert
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map); // Zoom unten rechts
 
 var fab = document.getElementById('fab');
 var drawer = document.getElementById('drawer');
@@ -230,33 +237,88 @@ var bar = document.getElementById('bar');
 var pct = document.getElementById('pct');
 function progress(frac){ var p = Math.max(0, Math.min(1, frac||0)); bar.style.width = (Math.round(p*100))+'%'; pct.textContent = (Math.round(p*100))+'%'; }
 
-/* ======== Farbskala ======== */
+/* ======== Farbpalette (feine viridis) + Legende ======== */
 var STOPS = [
   {t:0.00, c:[68,1,84]},
-  {t:0.20, c:[71,44,122]},
-  {t:0.40, c:[59,81,139]},
-  {t:0.60, c:[44,113,142]},
-  {t:0.80, c:[33,144,141]},
-  {t:1.00, c:[253,231,37]}
+  {t:0.07, c:[72,30,110]},
+  {t:0.14, c:[64,67,135]},
+  {t:0.21, c:[55,90,140]},
+  {t:0.28, c:[45,115,142]},
+  {t:0.35, c:[37,137,141]},
+  {t:0.42, c:[31,159,136]},
+  {t:0.50, c:[43,183,122]},
+  {t:0.58, c:[84,199,101]},
+  {t:0.66, c:[129,211,78]},
+  {t:0.74, c:[173,220,52]},
+  {t:0.82, c:[212,225,33]},
+  {t:0.90, c:[238,229,27]},
+  {t:0.96, c:[247,229,32]},
+  {t:1.00, c:[253,231,37]},
 ];
 function lerp(a,b,t){ return a + (b-a)*t; }
 function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)), Math.round(lerp(c1[1],c2[1],t)), Math.round(lerp(c1[2],c2[2],t))]; }
+function colorFromStops(t){
+  t = Math.max(0, Math.min(1, t));
+  var i=0; while (i<STOPS.length-1 && t>STOPS[i+1].t) i++;
+  var a = STOPS[i], b = STOPS[i+1];
+  var local = (t - a.t) / (b.t - a.t + 1e-12);
+  return lerpColor(a.c, b.c, local);
+}
+var PALETTE = null;
+function buildPalette(n){
+  var arr = new Array(n);
+  for (var i=0;i<n;i++){ var t = i/(n-1); arr[i] = colorFromStops(t); }
+  return arr;
+}
 function colorFor(v, vmin, vmax){
   if (!isFinite(v)) return [0,0,0,0];
-  var t = Math.max(0, Math.min(1, (v - vmin) / (vmax - vmin + 1e-9)));
-  var i = 0; while (i < STOPS.length-1 && t > STOPS[i+1].t) i++;
-  var t0 = STOPS[i].t, t1 = STOPS[i+1].t;
-  var local = (t - t0) / (t1 - t0);
-  var rgb = lerpColor(STOPS[i].c, STOPS[i+1].c, local);
-  return [rgb[0], rgb[1], rgb[2], 255];
+  var t = (v - vmin) / (vmax - vmin + 1e-12);
+  t = Math.max(0, Math.min(1, t));
+  if (PALETTE && PALETTE.length){
+    var idx = Math.round(t * (PALETTE.length - 1));
+    var c = PALETTE[idx]; return [c[0], c[1], c[2], 255];
+  }
+  var c2 = colorFromStops(t); return [c2[0], c2[1], c2[2], 255];
+}
+
+/* Legende-Control */
+var legendCtrl = L.control({ position: 'bottomright' });
+legendCtrl.onAdd = function(map){
+  var div = L.DomUtil.create('div','leaflet-control legend');
+  div.innerHTML = `
+    <div style="font-weight:600;margin-bottom:4px">RR (mm)</div>
+    <canvas id="legendCanvas" width="240" height="12"></canvas>
+    <div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div>
+    <div class="hint">Skalierung: 2–98&nbsp;%</div>
+  `;
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+legendCtrl.addTo(map);
+function updateLegend(vmin, vmax){
+  var c = document.getElementById('legendCanvas'); if (!c) return;
+  var ctx = c.getContext('2d'); var w = c.width, h = c.height;
+  var img = ctx.createImageData(w,h);
+  for (var x=0; x<w; x++){
+    var t = x/(w-1);
+    var col = PALETTE && PALETTE.length ? PALETTE[Math.round(t*(PALETTE.length-1))] : colorFromStops(t);
+    for (var y=0; y<h; y++){
+      var i = (y*w + x)*4;
+      img.data[i] = col[0]; img.data[i+1] = col[1]; img.data[i+2] = col[2]; img.data[i+3] = 255;
+    }
+  }
+  ctx.putImageData(img,0,0);
+  var vminEl = document.getElementById('vminLabel');
+  var vmaxEl = document.getElementById('vmaxLabel');
+  if (vminEl) vminEl.textContent = vmin.toFixed(1) + ' mm';
+  if (vmaxEl) vmaxEl.textContent = vmax.toFixed(1) + ' mm';
 }
 
 /* ======== Stats/Quantile ======== */
 function quantile(sorted, q){
   if (!sorted.length) return NaN;
   var pos = (sorted.length - 1) * q;
-  var base = Math.floor(pos);
-  var rest = pos - base;
+  var base = Math.floor(pos); var rest = pos - base;
   if (sorted[base+1] !== undefined) return sorted[base] + rest * (sorted[base+1] - sorted[base]);
   return sorted[base];
 }
@@ -383,8 +445,8 @@ var state = {
   shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
   scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
   scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
-  tileScaleX: Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 2) || 2), // 200–500 %
-  tileScaleY: Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2) || 2),
+  tileScaleX: Math.min(6, Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 2) || 2)), // 200–600 %
+  tileScaleY: Math.min(6, Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2) || 2)),
 };
 var pxX = document.getElementById('pxX'), pxY = document.getElementById('pxY');
 var wPct = document.getElementById('wPct'), hPct = document.getElementById('hPct');
@@ -394,7 +456,7 @@ var tileXpx = document.getElementById('tileXpx'), tileYpx = document.getElementB
 
 function updateUI(){
   state.tileScaleX = Math.min(6, Math.max(2, state.tileScaleX));
-  state.tileScaleY = Math.min(5, Math.max(2, state.tileScaleY));
+  state.tileScaleY = Math.min(6, Math.max(2, state.tileScaleY));
   pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
   wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1);
   tileX.value = String(Math.round(state.tileScaleX*100));
@@ -442,6 +504,10 @@ function renderToCanvas(cells, bounds){
   for (var i=0;i<cells.length;i++) vals[i] = cells[i].v;
   var rr = robustRange(vals);
   var vmin = rr.vmin, vmax = rr.vmax;
+
+  // Palette bauen + Legende aktualisieren
+  PALETTE = buildPalette(256);
+  updateLegend(vmin, vmax);
 
   // Kachelgröße (px)
   var stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, PX_W, PX_H);
@@ -529,7 +595,6 @@ function placeOverlayFromCanvas(rr){
   overlay = L.imageOverlay(url, baseBounds, { opacity: 0.85 }).addTo(map);
   overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
 }
-
 function rerenderSameData(){
   if (!lastCells || !baseBoundsObj){ toast("Bitte erst laden"); return; }
   progress(0.05);
@@ -537,7 +602,7 @@ function rerenderSameData(){
   placeOverlayFromCanvas(rr);
 }
 
-/* Extrahiert die Logik aus dem Button-Handler, damit wir sie beim Load wiederverwenden */
+/* Extrahierte Render-Logik */
 function renderOverlay(opts){
   opts = opts || {};
   progress(0);
@@ -673,14 +738,12 @@ closeChartBtn.addEventListener('click', function(){
 
 function kmToDegLat(km){ return km / 111.0; }
 function kmToDegLon(km, lat){ return km / (111.320*Math.cos(lat*Math.PI/180)); }
-
 function buildPointBBox(lat, lon){
   var halfKm = 2.0; // ~2 km
   var dLat = kmToDegLat(halfKm);
   var dLon = kmToDegLon(halfKm, lat);
   return [lat - dLat, lon - dLon, lat + dLat, lon + dLon];
 }
-
 function dist2Deg(lat1, lon1, lat2, lon2){
   var x = (lon2 - lon1) * Math.cos((lat1+lat2)*0.5*Math.PI/180);
   var y = (lat2 - lat1);
@@ -760,7 +823,6 @@ map.on('click', function(e){
 
 /* ======== Auto-Render beim Laden ======== */
 window.addEventListener('load', function(){
-  // etwas warten, bis Map & UI initialisiert sind
   setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150);
 });
 </script>
