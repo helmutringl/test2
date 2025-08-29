@@ -190,7 +190,9 @@ var CANVAS_W = 1536; // 1536/2048/3072 — höher = glatter, langsamer
 function toast(msg){ var el = document.getElementById('toast'); el.textContent = msg; el.style.display='block';
                      clearTimeout(el._t); el._t = setTimeout(function(){ el.style.display='none'; }, 2200); }
 
-var map = L.map('map', { zoomControl: true });
+// var map = L.map('map', { zoomControl: true });
+var map = L.map('map', { zoomControl: false });
+
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom: 19, attribution: '&copy; OpenStreetMap'}).addTo(map);
 
 var fab = document.getElementById('fab');
