@@ -1,1037 +1,599 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="de">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GeoSphere Niederschlagssumme (SPARTACUS)</title>
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-          integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-          crossorigin=""/>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-            integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-            crossorigin=""></script>
-    <style>
-        body {
-            font-family: sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            height: 100vh;
-        }
-        #map {
-            flex: 1;
-            height: 100%;
-        }
-        #sidebar {
-            width: 380px; /* Breiter für Debug-Infos */
-            padding: 20px;
-            background-color: #f4f4f4;
-            box-shadow: -2px 0 5px rgba(0,0,0,0.1);
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-        h2 {
-            margin-top: 0;
-        }
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 5px;
-        }
-        label {
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        input[type="text"], input[type="date"], select, button {
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            width: 100%;
-            box-sizing: border-box;
-        }
-        button {
-            cursor: pointer;
-            font-weight: bold;
-            color: white;
-            border: none;
-        }
-        button:disabled {
-            background-color: #ccc !important;
-            cursor: not-allowed;
-        }
-        #btnRender {
-            background-color: #4CAF50;
-        }
-        #btnRender:hover:not(:disabled) {
-            background-color: #45a049;
-        }
-        #btnExport {
-            background-color: #0078A8;
-        }
-        #btnExport:hover:not(:disabled) {
-            background-color: #005a75;
-        }
-        .preset-buttons {
-            display: flex;
-            gap: 10px;
-        }
-        .preset-buttons button {
-            flex: 1;
-            background-color: #e0e0e0;
-            color: black;
-        }
-        
-        /* Status Area Styling - Optimiert für Debugging */
-        #status {
-            font-size: 0.85em;
-            color: #333;
-            word-break: break-word; /* Um lange URLs/Koordinaten umzubrechen */
-            white-space: pre-wrap; /* Wichtig für Zeilenumbrüche in Debug-Info */
-            max-height: 200px;
-            overflow-y: auto;
-            background-color: #fff;
-            padding: 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            font-family: monospace; /* Bessere Lesbarkeit */
-        }
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
+<title>14-Tage-Niederschlag • NÖ & STMK (Client)</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
+<style>
+  *{box-sizing:border-box}
+  html,body,#map{height:100%;margin:0}
+  #map{background:#eef2f7}
 
-        #progress-container {
-            background-color: #ddd;
-            border-radius: 4px;
-            overflow: hidden;
-            height: 20px;
-            margin-top: 5px;
-        }
-        #progress-bar {
-            width: 0%;
-            height: 100%;
-            background-color: #4CAF50;
-            text-align: center;
-            line-height: 20px;
-            color: white;
-            transition: width 0.3s;
-            font-size: 0.8em;
-        }
+  /* Drawer (Einstellungs-Panel) */
+  #drawer{
+    position:fixed; z-index:5000;
+    top:calc(env(safe-area-inset-top,0) + 60px);
+    right:calc(env(safe-area-inset-right,0) + 12px);
+    width:min(380px,94vw); max-height:72vh; overflow:auto;
+    background:#fff; border:1px solid #e5e5e5; border-radius:12px;
+    box-shadow:0 8px 24px rgba(0,0,0,.18);
+    transform:translateX(110%); transition:transform .22s ease-out;
+    padding:12px;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+  }
+  #drawer.open{ transform:none; }
+  #drawer .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  #drawer .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa; cursor:pointer }
+  #drawer code{ background:#f3f3f3; padding:1px 6px; border-radius:4px }
+  label{font-size:12px}
+  .hint{font-size:12px; opacity:.7}
+  input[type="date"]{padding:4px 6px; border:1px solid #ddd; border-radius:6px; font:14px system-ui}
+  input[type="range"], select{width:160px}
+  .progress{height:6px; background:#eee; border-radius:999px; overflow:hidden; width:100%}
+  .bar{height:100%; width:0%; background:#4f46e5; transition:width .15s}
 
-        #legend {
-            margin-top: 15px;
-            padding: 10px;
-            background: white;
-            border-radius: 4px;
-        }
-        #legend-canvas {
-            width: 100%;
-            height: 25px;
-            border-radius: 4px;
-        }
-        #legend-labels {
-            display: flex;
-            justify-content: space-between;
-            font-size: 0.8em;
-            margin-top: 5px;
-        }
-    </style>
+  /* Toast */
+  #toast{
+    position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:5000;
+    background:#111; color:#fff; padding:8px 12px; border-radius:8px; opacity:.92; display:none;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:13px;
+  }
+
+  /* Chart-Panel */
+  #chartPanel{
+    position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
+    width:min(680px,96vw); background:#fff; border:1px solid #e5e5e5; border-radius:12px;
+    box-shadow:0 12px 28px rgba(0,0,0,.18); z-index:5000; display:none;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+  }
+  #chartPanel.open{display:block}
+  #chartHead{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #eee; }
+  #chartBody{ padding:8px 12px 12px 12px; }
+  #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
+  #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
+
+  /* Legende */
+  .leaflet-control.legend {
+    background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5;
+    box-shadow:0 2px 8px rgba(0,0,0,.12); font-family:system-ui,-apple-system,Segoe UI,Roboto;
+  }
+  #legendCanvas{ display:block; width:240px; height:12px; image-rendering:pixelated; }
+  .legend-row{ display:flex; justify-content:space-between; margin-top:4px; font-size:12px; }
+
+  /* Custom Leaflet Controls */
+  .leaflet-control.custom{
+    background:#fff; border:1px solid #e5e5e5; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.12);
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; overflow:hidden;
+  }
+  .custom .btn{
+    background:#fff; padding:8px 12px; border:0; border-bottom:1px solid #eee; font-size:14px; width:100%; text-align:left;
+  }
+  .custom .btn:last-child{ border-bottom:none; }
+  .gear-btn{
+    background:#fff; border:1px solid #e5e5e5; border-radius:10px; width:42px; height:42px;
+    display:grid; place-items:center; font-size:18px; line-height:1;
+    box-shadow:0 2px 8px rgba(0,0,0,.12);
+  }
+</style>
 </head>
 <body>
+  <div id="map"></div>
 
-<div id="sidebar">
-    <h2>Niederschlagssumme (SPARTACUS)</h2>
-
-    <div class="control-group">
-        <label>Zeitraum</label>
-        <label for="dateStart" style="font-weight: normal;">Von:</label>
-        <input type="date" id="dateStart">
-        <label for="dateEnd" style="font-weight: normal;">Bis (inklusive):</label>
-        <input type="date" id="dateEnd">
+  <!-- Drawer -->
+  <div id="drawer" aria-hidden="true">
+    <div class="row" style="justify-content:space-between; width:100%">
+      <div>
+        <div><strong>Overlay aus API rendern (Client)</strong></div>
+        <div class="hint">SPARTACUS v2 RR • GeoSphere Dataset-API</div>
+      </div>
+      <button class="kb" id="renderBtn">Laden &amp; Rendern</button>
     </div>
 
-    <div class="control-group">
-        <label for="bbox">BBOX (lat_min, lon_min, lat_max, lon_max)</label>
-        <input type="text" id="bbox" placeholder="Süden, Westen, Norden, Osten">
-        <div class="preset-buttons">
-            <button onclick="setBboxPreset('NOE')">NÖ</button>
-            <button onclick="setBboxPreset('STMK')">Steiermark</button>
-        </div>
-    </div>
-
-    <div class="control-group">
-        <label for="palette">Farbpalette</label>
-        <select id="palette" onchange="handlePaletteChange()">
-            <option value="viridis">Viridis</option>
-            <option value="spectral">Spectral</option>
-            <option value="rainbow">Rainbow</option>
+    <!-- Presets -->
+    <div class="row">
+      <label>Bundesland:&nbsp;
+        <select id="preset">
+          <option value="noe">Niederösterreich</option>
+          <option value="stmk">Steiermark</option>
         </select>
+      </label>
+      <button class="kb" id="applyPreset">Übernehmen</button>
     </div>
 
-    <div class="control-group">
-        <label for="opacity">Deckkraft: <span id="opacityValue">75%</span></label>
-        <input type="range" id="opacity" min="0" max="1" step="0.01" value="0.75" oninput="updateOpacity(this.value)">
+    <div class="row">
+      <label>Von: <input type="date" id="start"></label>
+      <label>Bis: <input type="date" id="end"></label>
     </div>
 
-    <button id="btnRender" onclick="renderPrecipitation()" disabled>Rendern</button>
-    <button id="btnExport" onclick="exportPNG()" disabled>Als PNG exportieren</button>
-
-    <div class="control-group">
-        <label>Status & Debug Info</label>
-        <div id="status">Initialisiere...</div>
-        <div id="progress-container">
-            <div id="progress-bar"></div>
-        </div>
+    <div class="row">
+      <label>BBOX&nbsp;<span class="hint">(s,w,n,e)</span>:</label>
+      <input id="bbox" style="flex:1;min-width:200px;padding:6px;border:1px solid #ddd;border-radius:6px"
+             value="47.419564822,14.450844322,49.024548178,17.075640678">
     </div>
 
-    <div id="legend">
-        <label>Legende (mm, 0-98% Skala)</label>
-        <canvas id="legend-canvas"></canvas>
-        <div id="legend-labels">
-            <span id="legend-min">0.0</span>
-            <span id="legend-max">-</span>
-        </div>
+    <div class="row" style="width:100%">
+      <div class="progress" style="flex:1"><div class="bar" id="bar"></div></div>
+      <div style="min-width:52px;text-align:right"><code id="pct">0%</code></div>
     </div>
-</div>
 
-<div id="map"></div>
+    <div class="row">
+      <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="85">
+        <span id="ovv">85%</span></label>
+      <label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label>
+      <button class="kb" id="dlPng">PNG speichern</button>
+    </div>
 
+    <div style="margin:6px 0;border-top:1px solid #eee"></div>
+    <div class="row"><strong>Manuelle Justierung</strong> <span class="hint">(persistiert lokal)</span></div>
+
+    <div class="row">
+      <small>Shift X:</small>
+      <button class="kb" id="left">←</button>
+      <div><code id="pxX">0</code>&nbsp;px</div>
+      <button class="kb" id="right">→</button>
+    </div>
+
+    <div class="row">
+      <small>Shift Y:</small>
+      <button class="kb" id="up">↑</button>
+      <div><code id="pxY">0</code>&nbsp;px</div>
+      <button class="kb" id="down">↓</button>
+      <small class="hint">(↑ = nach Norden)</small>
+    </div>
+
+    <div class="row">
+      <small>Breite (W):</small>
+      <button class="kb" id="wMinus">W−</button>
+      <div><code id="wPct">0.0</code>&nbsp;%</div>
+      <button class="kb" id="wPlus">W+</button>
+    </div>
+
+    <div class="row">
+      <small>Höhe (H):</small>
+      <button class="kb" id="hMinus">H−</button>
+      <div><code id="hPct">0.0</code>&nbsp;%</div>
+      <button class="kb" id="hPlus">H+</button>
+    </div>
+
+    <div style="margin:6px 0;border-top:1px solid #eee"></div>
+    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live)</span></div>
+    <div class="row">
+      <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="200"> <span id="tileXVal">200%</span></label>
+      <code id="tileXpx">– px</code>
+    </div>
+    <div class="row">
+      <label>Y: <input type="range" id="tileY" min="200" max="600" step="5" value="200"> <span id="tileYVal">200%</span></label>
+      <code id="tileYpx">– px</code>
+    </div>
+
+    <div style="margin:6px 0;border-top:1px solid #eee"></div>
+    <div class="row">
+      <label>Palette:&nbsp;
+        <select id="palette">
+          <option value="spectral">Spectral (mehrfarbig)</option>
+          <option value="rainbow">Rainbow (HSV)</option>
+          <option value="viridis">Viridis (grün–blau)</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
+  <!-- Chart-Panel -->
+  <div id="chartPanel" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
+    <div id="chartHead">
+      <div>
+        <div id="chartTitle"><strong>14-Tage-Summe (RR) am Punkt</strong></div>
+        <div id="chartSub" class="hint"></div>
+      </div>
+      <button id="closeChart">Schließen</button>
+    </div>
+    <div id="chartBody">
+      <canvas id="chartCanvas" height="160"></canvas>
+      <div id="chartMeta"></div>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script>
-    // --- Configuration ---
-    const API_HOST = 'https://dataset.api.hub.geosphere.at';
-    const DATASET_ENDPOINT = '/v1/grid/historical/spartacus-v2-1d-1km';
-    const PARAMETER = 'RR'; // Niederschlag
-    
-    // Robustheit: Epsilon (Sicherheitsabstand) für Clamping.
-    // Erhöht auf 0.009 Grad (ca. 1km oder eine Pixelbreite), um strikte API-Validierung sicher zu bestehen.
-    const CLAMP_EPSILON = 0.009; 
+/* ======== Konfig ======== */
+var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
+var PARAM = "RR";
+var CANVAS_W = 1536;
 
-    // Dokumentierte Grenzen (Fallback).
-    const DOCUMENTED_EXTENT = {
-        lat_min: 46.37, lon_min: 9.53, lat_max: 49.02, lon_max: 17.16
-    };
-    // Plausibilitätsgrenzen für Österreich (zur Validierung der Metadaten-Interpretation)
-    const AUSTRIA_PLAUSIBILITY = {
-        lat_min: 46.0, lon_min: 9.0, lat_max: 50.0, lon_max: 18.0
-    };
+// Presets
+var PRESETS = {
+  noe: { name:"Niederösterreich", bbox:[47.419564822,14.450844322,49.024548178,17.075640678], center:[48.30,15.75] },
+  stmk:{ name:"Steiermark",       bbox:[46.35,13.55,47.75,16.51],                    center:[47.25,15.25] }
+};
 
-    const BBOX_PRESETS = {
-        // Niederösterreich (lat_min, lon_min, lat_max, lon_max).
-        NOE: '47.419564822,14.450844322,49.024548178,17.075640678',
-        // Steiermark.
-        STMK: '46.35,13.55,47.75,16.51'
-    };
-    const MISSING_VALUE = -9999;
+/* ======== Map ======== */
+function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg; el.style.display='block';
+  clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2200); }
+var map = L.map('map', { zoomControl:false }); // Zoom-Buttons aus
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
-    // --- Global State ---
-    let map;
-    let precipitationOverlay = null;
-    let currentCanvas = null;
-    let currentData = null;
-    let isLoading = false;
-    let DATASET_BOUNDS = null; 
-    let DATASET_TEMPORAL = null;
-    let isInitialized = false;
+/* ======== Leaflet-Controls: Links oben (2 Buttons) ======== */
+var LeftControl = L.Control.extend({
+  options:{ position:'topleft' },
+  onAdd:function(){
+    var container = L.DomUtil.create('div','leaflet-control custom');
+    var btnLoc = L.DomUtil.create('button','btn',container); btnLoc.id='loc'; btnLoc.textContent='📍 Meine Position';
+    var btnReset = L.DomUtil.create('button','btn',container); btnReset.id='reset'; btnReset.textContent='↺ Ansicht/Reset';
+    L.DomEvent.disableClickPropagation(container);
+    return container;
+  }
+});
+map.addControl(new LeftControl());
 
-    // --- Initialization & Metadata Fetching ---
-    
-    async function initialize() {
-        if (isInitialized) return;
-        isInitialized = true;
+/* ======== Leaflet-Controls: Rechts oben (Zahnrad) ======== */
+var GearControl = L.Control.extend({
+  options:{ position:'topright' },
+  onAdd:function(){
+    var btn = L.DomUtil.create('button','gear-btn leaflet-control custom'); btn.id='fab'; btn.title='Einstellungen'; btn.textContent='⚙️';
+    L.DomEvent.disableClickPropagation(btn);
+    return btn;
+  }
+});
+map.addControl(new GearControl());
 
-        initMap();
-        initUI(); 
-        updateLegend(0, 100); 
-        
-        await fetchMetadata();
+/* ======== Drawer Toggle ======== */
+var fab=document.getElementById('fab'), drawer=document.getElementById('drawer');
+function toggleDrawer(){ var open=!drawer.classList.contains('open'); drawer.classList.toggle('open',open); drawer.setAttribute('aria-hidden', String(!open)); }
+fab.addEventListener('click', toggleDrawer);
+
+/* ======== Datum: letzte 14 Tage ======== */
+var startEl=document.getElementById('start'), endEl=document.getElementById('end');
+(function(){
+  var today=new Date(), end=new Date(today.getFullYear(), today.getMonth(), today.getDate()-1), start=new Date(end); start.setDate(end.getDate()-13);
+  function fmt(d){ return d.toISOString().slice(0,10); }
+  startEl.value=fmt(start); endEl.value=fmt(end);
+})();
+
+/* ======== States ======== */
+var overlay=null, rect=null, baseBounds=null, baseBoundsObj=null;
+var lastCanvas=null, lastCells=null, lastStepPx=null, clickMarker=null;
+
+/* ======== Progress ======== */
+var bar=document.getElementById('bar'), pct=document.getElementById('pct');
+function progress(frac){ var p=Math.max(0,Math.min(1,frac||0)); bar.style.width=(Math.round(p*100))+'%'; pct.textContent=(Math.round(p*100))+'%'; }
+
+/* ======== Paletten ======== */
+var paletteSel=document.getElementById('palette');
+var currentPalette=localStorage.getItem('ovPalette')||'spectral';
+paletteSel.value=currentPalette;
+paletteSel.addEventListener('change', function(){ currentPalette=this.value; localStorage.setItem('ovPalette', currentPalette); if(lastCells){ rerenderSameData(); } });
+function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t))]; }
+function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); var c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)), r=0,g=0,b=0;
+  if(hp<1){r=c;g=x;} else if(hp<2){r=x;g=c;} else if(hp<3){g=c;b=x;} else if(hp<4){g=x;b=c;} else if(hp<5){r=x;b=c;} else {r=c;b=x;} var m=l-c/2; return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];}
+function getStops(name){
+  if(name==='viridis'){ return [{t:0.00,c:[68,1,84]},{t:0.07,c:[72,30,110]},{t:0.14,c:[64,67,135]},{t:0.21,c:[55,90,140]},
+                          {t:0.28,c:[45,115,142]},{t:0.35,c:[37,137,141]},{t:0.42,c:[31,159,136]},{t:0.50,c:[43,183,122]},
+                          {t:0.58,c:[84,199,101]},{t:0.66,c:[129,211,78]},{t:0.74,c:[173,220,52]},{t:0.82,c:[212,225,33]},
+                          {t:0.90,c:[238,229,27]},{t:0.96,c:[247,229,32]},{t:1.00,c:[253,231,37]}]; }
+  if(name==='spectral'){ var cols=['#9e0142','#d53e4f','#f46d43','#fdae61','#fee08b','#ffffbf','#e6f598','#abdda4','#66c2a5','#3288bd','#5e4fa2'];
+                         var s=[]; for(var i=0;i<cols.length;i++){ s.push({t:i/(cols.length-1), c:hex2rgb(cols[i])}); } return s; }
+  if(name==='rainbow'){ var N=9, s=[]; for(var i=0;i<N;i++){ var t=i/(N-1), hue=260+(-280*t); s.push({t:t, c:hslToRgb(hue,1.0,0.52)}); } return s; }
+  return getStops('spectral');
+}
+var STOPS=getStops(currentPalette), PALETTE=null;
+function colorFromStops(t){ t=Math.max(0,Math.min(1,t)); var i=0; while(i<STOPS.length-1 && t>STOPS[i+1].t) i++; var a=STOPS[i], b=STOPS[i+1], local=(t-a.t)/(b.t-a.t+1e-12);
+  return lerpColor(a.c,b.c,local); }
+function buildPalette(name,n){ STOPS=getStops(name); var arr=new Array(n); for(var i=0;i<n;i++){ var t=i/(n-1); arr[i]=colorFromStops(t);} return arr; }
+function colorFor(v,vmin,vmax){ if(!isFinite(v)) return [0,0,0,0]; var t=(v-vmin)/(vmax-vmin+1e-12); t=Math.max(0,Math.min(1,t));
+  var c=PALETTE && PALETTE.length ? PALETTE[Math.round(t*(PALETTE.length-1))] : colorFromStops(t); return [c[0],c[1],c[2],255]; }
+var legendCtrl=L.control({position:'bottomright'});
+legendCtrl.onAdd=function(map){ var div=L.DomUtil.create('div','leaflet-control legend');
+  div.innerHTML='<div style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>';
+  L.DomEvent.disableClickPropagation(div); return div; }; legendCtrl.addTo(map);
+function updateLegend(vmin,vmax){ var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
+  for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
+    for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
+  ctx.putImageData(img,0,0); var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
+  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm'; if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1)+' mm'; }
+
+/* ======== Stats ======== */
+function quantile(sorted,q){ if(!sorted.length) return NaN; var pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
+  if(sorted[base+1]!==undefined) return sorted[base]+rest*(sorted[base+1]-sorted[base]); return sorted[base]; }
+function robustRange(vals){ var a=[]; for(var i=0;i<vals.length;i++) if(isFinite(vals[i])) a.push(vals[i]); if(!a.length) return {vmin:0,vmax:1};
+  a.sort(function(x,y){return x-y;}); var v2=quantile(a,0.02), v98=quantile(a,0.98); if(!isFinite(v2)||!isFinite(v98)||v98<=v2){ v2=a[0]; v98=a[a.length-1]; }
+  if(v98<=v2) v98=v2+1e-6; return {vmin:v2, vmax:v98}; }
+
+/* ======== API ======== */
+function loadFeatureCollection(start,end,bbox){
+  var params=new URLSearchParams({ parameters:PARAM, start:start, end:end, bbox:bbox.join(',') });
+  return fetch(DATASET_URL+"?"+params.toString(), { headers:{ "Accept":"application/json" } })
+    .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t); }); return r.json(); })
+    .then(function(fc){ if(!fc || fc.type!=="FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten."); return fc; });
+}
+function extractValues(props,nt){
+  var prefer=[PARAM,String(PARAM).toLowerCase(),"RRsum","rr_sum","value","values"];
+  for(var i=0;i<prefer.length;i++){ var v=props[prefer[i]];
+    if(Array.isArray(v) && v.length>0){ var out=[]; for(var j=0;j<v.length;j++){ var x=v[j]; if(typeof x==='number' && isFinite(x)) out.push(Number(x)); } if(out.length>0) return out; } }
+  var keys=Object.keys(props);
+  for(var k=0;k<keys.length;k++){ var v2=props[keys[k]];
+    if(Array.isArray(v2) && (nt? v2.length===nt : v2.length>0)){ var out2=[]; for(var j2=0;j2<v2.length;j2++){ var y=v2[j2]; if(typeof y==='number' && isFinite(y)) out2.push(Number(y)); } if(out2.length>0) return out2; } }
+  var found=null; (function scan(o){ if(found) return;
+    if(Array.isArray(o)){ if(o.length>0){ var num=false; for(var q=0;q<o.length;q++){ if(typeof o[q]==='number' && isFinite(o[q])){ num=true; break; } }
+      if(num){ found=o.map(function(z){ return Number(z); }); return; } }
+      for(var q2=0;q2<o.length;q2++) scan(o[q2]);
+    } else if(o && typeof o==='object'){ var ks=Object.keys(o); for(var m=0;m<ks.length;m++) scan(o[ks[m]]); } })(props);
+  return found;
+}
+function bboxFromGeom(geom){
+  var coords=geom && geom.coordinates; var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  (function walk(node){ if(!node) return; if(Array.isArray(node)){
+    if(node.length>=2 && typeof node[0]==='number' && typeof node[1]==='number'){ var x=node[0], y=node[1];
+      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
+    else { for (var i=0;i<node.length;i++) walk(node[i]); } } })(coords);
+  return [minx,miny,maxx,maxy];
+}
+
+/* ======== Rastergröße schätzen ======== */
+function medianFrom(arr){ var a=[]; for(var i=0;i<arr.length;i++) if(isFinite(arr[i])) a.push(arr[i]);
+  if(!a.length) return NaN; a.sort(function(x,y){return x-y;}); var mid=0.5*(a.length-1), lo=Math.floor(mid), hi=Math.ceil(mid); return a[lo]+(mid-lo)*(a[hi]-a[lo]); }
+function estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,pxW,pxH){
+  var wpx=[],hpx=[],cx=[],cy=[];
+  for(var i=0;i<cells.length;i++){
+    var cw=(cells[i].maxx-cells[i].minx)/lonPerPx, ch=(cells[i].maxy-cells[i].miny)/latPerPx;
+    if(cw>0) wpx.push(cw); if(ch>0) hpx.push(ch);
+    var cx_deg=0.5*(cells[i].minx+cells[i].maxx), cy_deg=0.5*(cells[i].miny+cells[i].maxy);
+    cx.push((cx_deg-bounds.west)/lonPerPx); cy.push((bounds.north-cy_deg)/latPerPx);
+  }
+  var dx=medianFrom(wpx), dy=medianFrom(hpx);
+  if(!isFinite(dx)||dx<=0){ cx.sort(function(a,b){return a-b;}); var difX=[]; for(var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if(d>0.25) difX.push(d);} dx=medianFrom(difX); }
+  if(!isFinite(dy)||dy<=0){ cy.sort(function(a,b){return a-b;}); var difY=[]; for(var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if(d2>0.25) difY.push(d2);} dy=medianFrom(difY); }
+  if(!isFinite(dx)||dx<=0||!isFinite(dy)||dy<=0){
+    var N=Math.max(1,cells.length), AR=pxW/pxH;
+    if(!isFinite(dx)||dx<=0) dx=pxW/Math.sqrt(N*AR);
+    if(!isFinite(dy)||dy<=0) dy=pxH/Math.sqrt(N/AR);
+  }
+  return { dx:Math.max(1,dx*1.05), dy:Math.max(1,dy*1.05) };
+}
+
+/* ======== Justage / Tile ======== */
+var state={
+  shiftX:Number(localStorage.getItem('ovShiftX')||0)||0,
+  shiftY:Number(localStorage.getItem('ovShiftY')||0)||0,
+  scaleW:Number(localStorage.getItem('ovScaleW')||0)||0,
+  scaleH:Number(localStorage.getItem('ovScaleH')||0)||0,
+  tileScaleX:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleX')||2)||2)),
+  tileScaleY:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleY')||2)||2)),
+};
+var pxX, pxY, wPct, hPct, tileX, tileY, tileXVal, tileYVal, tileXpx, tileYpx;
+function bindUIRefs(){
+  pxX=document.getElementById('pxX'); pxY=document.getElementById('pxY');
+  wPct=document.getElementById('wPct'); hPct=document.getElementById('hPct');
+  tileX=document.getElementById('tileX'); tileY=document.getElementById('tileY');
+  tileXVal=document.getElementById('tileXVal'); tileYVal=document.getElementById('tileYVal');
+  tileXpx=document.getElementById('tileXpx'); tileYpx=document.getElementById('tileYpx');
+}
+bindUIRefs();
+function updateUI(){
+  state.tileScaleX=Math.min(6,Math.max(2,state.tileScaleX));
+  state.tileScaleY=Math.min(6,Math.max(2,state.tileScaleY));
+  pxX.textContent=state.shiftX; pxY.textContent=state.shiftY;
+  wPct.textContent=state.scaleW.toFixed(1); hPct.textContent=state.scaleH.toFixed(1);
+  tileX.value=String(Math.round(state.tileScaleX*100)); tileY.value=String(Math.round(state.tileScaleY*100));
+  tileXVal.textContent=Math.round(state.tileScaleX*100)+'%'; tileYVal.textContent=Math.round(state.tileScaleY*100)+'%';
+  if(lastStepPx){ tileXpx.textContent="≈ "+Math.round(lastStepPx.dx*state.tileScaleX)+" px"; tileYpx.textContent="≈ "+Math.round(lastStepPx.dy*state.tileScaleY)+" px"; }
+  else { tileXpx.textContent="– px"; tileYpx.textContent="– px"; }
+}
+function persist(){
+  localStorage.setItem('ovShiftX', String(state.shiftX));
+  localStorage.setItem('ovShiftY', String(state.shiftY));
+  localStorage.setItem('ovScaleW', String(state.scaleW));
+  localStorage.setItem('ovScaleH', String(state.scaleH));
+  localStorage.setItem('ovTileScaleX', String(state.tileScaleX));
+  localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
+  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
+}
+
+/* ======== Renderer ======== */
+function renderToCanvas(cells,bounds){
+  var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
+  var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+  var cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H;
+  var ctx=cvs.getContext('2d',{willReadFrequently:false}); ctx.imageSmoothingEnabled=false;
+  var img=ctx.createImageData(PX_W,PX_H), data=img.data;
+  var lonPerPx=widthDeg/PX_W, latPerPx=heightDeg/PX_H;
+
+  var vals=new Array(cells.length); for(var i=0;i<cells.length;i++) vals[i]=cells[i].v;
+  var rr=robustRange(vals), vmin=rr.vmin, vmax=rr.vmax;
+
+  PALETTE=buildPalette(currentPalette,256); updateLegend(vmin,vmax);
+
+  var stepPx=estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,PX_W,PX_H); lastStepPx=stepPx;
+  var halfDxPx=Math.max(0.5,0.5*stepPx.dx*state.tileScaleX), halfDyPx=Math.max(0.5,0.5*stepPx.dy*state.tileScaleY);
+
+  var done=0;
+  for (var c=0;c<cells.length;c++){
+    var cell=cells[c], cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
+    var px0,px1,py0,py1;
+    if(cw_px>1 && ch_px>1){
+      px0=Math.max(0,Math.floor((cell.minx-bounds.west)/lonPerPx));
+      px1=Math.min(PX_W-1,Math.ceil((cell.maxx-bounds.west)/lonPerPx));
+      py0=Math.max(0,Math.floor((bounds.north-cell.maxy)/latPerPx));
+      py1=Math.min(PX_H-1,Math.ceil((bounds.north-cell.miny)/latPerPx));
+    } else {
+      var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
+      var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
+      px0=Math.max(0,Math.floor(cx_px-halfDxPx)); px1=Math.min(PX_W-1,Math.ceil(cx_px+halfDxPx));
+      py0=Math.max(0,Math.floor(cy_px-halfDyPx)); py1=Math.min(PX_H-1,Math.ceil(cy_px+halfDyPx));
     }
+    if(px1<px0 || py1<py0) continue;
 
-    // Hilfsfunktion zur Plausibilitätsprüfung von Koordinaten
-    const isPlausible = (lat_min, lon_min, lat_max, lon_max) => {
-        // Prüft, ob die Grenzen innerhalb der Plausibilitätsgrenzen liegen UND ob min < max ist.
-        const true_lat_min = Math.min(lat_min, lat_max);
-        const true_lat_max = Math.max(lat_min, lat_max);
-        const true_lon_min = Math.min(lon_min, lon_max);
-        const true_lon_max = Math.max(lon_min, lon_max);
+    var col=colorFor(cell.v,vmin,vmax), r=col[0], g=col[1], b=col[2], a=255;
+    for (var y=py0; y<=py1; y++){ var idx=(y*PX_W+px0)*4; for (var x=px0; x<=px1; x++){ data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4; } }
+    done++; if((done%1500)===0) progress(done/cells.length);
+  }
+  ctx.putImageData(img,0,0); progress(1); return { canvas:cvs, width:PX_W, height:PX_H };
+}
 
-        return true_lat_min >= AUSTRIA_PLAUSIBILITY.lat_min && true_lat_max <= AUSTRIA_PLAUSIBILITY.lat_max &&
-               true_lon_min >= AUSTRIA_PLAUSIBILITY.lon_min && true_lon_max <= AUSTRIA_PLAUSIBILITY.lon_max;
-    };
+/* ======== Overlay ======== */
+function applyTransformOnOverlay(ov,base){
+  if(!ov||!ov._image||!base) return;
+  var B=base, w0=(B.east-B.west), h0=(B.north-B.south), cx=B.west+w0/2, cy=B.south+h0/2;
+  var wdeg=w0*(1+state.scaleW/100), hdeg=h0*(1+state.scaleH/100);
+  var wpx=ov._image.naturalWidth||0, hpx=ov._image.naturalHeight||0;
+  var lonPerPx=wpx?(w0/wpx):0, latPerPx=hpx?(h0/hpx):0;
+  var dLon=state.shiftX*lonPerPx, dLat=state.shiftY*latPerPx;
+  var west=(cx-wdeg/2)+dLon, east=(cx+wdeg/2)+dLon, south=(cy-hdeg/2)+dLat, north=(cy+hdeg/2)+dLat;
+  var adj=L.latLngBounds([south,west],[north,east]); ov.setBounds(adj);
+  if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
+}
+function placeOverlayFromCanvas(rr){
+  lastCanvas=rr.canvas;
+  var url=rr.canvas.toDataURL("image/png");
+  if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
+  overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
+  overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
+}
+function rerenderSameData(){ if(!lastCells||!baseBoundsObj){ toast("Bitte erst laden"); return; } progress(0.05); var rr=renderToCanvas(lastCells, baseBoundsObj); placeOverlayFromCanvas(rr); }
 
-    async function fetchMetadata() {
-        updateStatus('DEBUG: Starte Metadaten-Abruf...', 0);
-        setLoadingState(true);
+/* ======== Render-Flow ======== */
+function renderOverlay(opts){
+  opts=opts||{}; progress(0); if(!opts.silent) toast("Lade Daten …");
+  try{
+    var start=startEl.value, end=endEl.value;
+    var partsStr=document.getElementById('bbox').value.trim().split(',');
+    if(partsStr.length!==4){ alert("BBOX-Format: south,west,north,east"); return; }
+    var parts=[]; for (var i=0;i<4;i++){ var p=parseFloat(partsStr[i]); if(!isFinite(p)){ alert("BBOX ungültig"); return; } parts.push(p); }
+    var south=parts[0], west=parts[1], north=parts[2], east=parts[3];
+    baseBoundsObj={south:south, west:west, north:north, east:east}; baseBounds=L.latLngBounds([south,west],[north,east]);
 
-        try {
-            const response = await fetch(`${API_HOST}${DATASET_ENDPOINT}/metadata`);
-            if (!response.ok) {
-                throw new Error(`Metadaten API Fehler: ${response.status}`);
-            }
-            const metadata = await response.json();
+    loadFeatureCollection(start,end,parts).then(function(fc){
+      var timestamps=fc.timestamps||[], nt=timestamps.length;
+      var feats=fc.features||[], cells=[];
+      for (var i=0;i<feats.length;i++){
+        var f=feats[i], geom=f && f.geometry; if(!geom) continue;
+        var vals=extractValues((f.properties||{}), nt); if(!vals) continue;
+        var sum=0; for (var j=0;j<vals.length;j++){ var vv=vals[j]; if(isFinite(vv)) sum+=vv; }
+        var bb=bboxFromGeom(geom); cells.push({ v:sum, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
+        if((i%1500)===0) progress(i/feats.length);
+      }
+      lastCells=cells.slice(0);
+      if(!opts.silent) toast("Zellen: "+cells.length);
+      var rr=renderToCanvas(cells, baseBoundsObj); placeOverlayFromCanvas(rr);
+      if(opts.fit!==false) map.fitBounds(baseBounds.pad(0.1));
+    }).catch(function(err){ console.error(err); alert("Fehler beim Laden/Rendern: "+(err && err.message? err.message: err)); });
+  } catch(e){ console.error(e); alert("Fehler beim Laden/Rendern: "+(e && e.message? e.message: e)); }
+}
 
-            // 1. Parse Spatial BBOX Robustly
-            const bbox = metadata.bbox;
-            if (!bbox || bbox.length !== 4 || bbox.some(isNaN)) {
-                throw new Error("Ungültige BBOX in Metadaten.");
-            }
+/* ======== Buttons (im Drawer + Leaflet-Controls) ======== */
+document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
+document.getElementById('dlPng').addEventListener('click', function(){
+  if(!lastCanvas){ toast("Bitte zuerst rendern"); return; }
+  var a=document.createElement('a'), start=startEl.value||'start', end=endEl.value||'end';
+  a.download='rr_sum_'+start+'_bis_'+end+'.png'; a.href=lastCanvas.toDataURL('image/png');
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+});
+document.getElementById('opacity').addEventListener('input', function(){ if(overlay) overlay.setOpacity(Number(this.value)/100); document.getElementById('ovv').textContent=this.value+'%'; });
+document.getElementById('showBounds').addEventListener('change', function(){ var checked=this.checked;
+  if(checked){ rect=L.rectangle(overlay? overlay._bounds: baseBounds,{color:'red',weight:1}).addTo(map); }
+  else { if(rect){ map.removeLayer(rect); rect=null; } }});
 
-            let interpretation = null;
+/* Links oben: GPS / Reset */
+document.getElementById('reset').addEventListener('click', function(){ if(baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
+/* GPS */
+var watchId=null, gpsMarker=null, accCircle=null, firstFix=true;
+function startWatch(){
+  if(watchId!==null) return;
+  watchId=navigator.geolocation.watchPosition(function(pos){
+    var lat=pos.coords.latitude, lon=pos.coords.longitude, acc=pos.coords.accuracy;
+    if(!gpsMarker) gpsMarker=L.marker([lat,lon]).addTo(map).bindPopup("Du bist hier");
+    gpsMarker.setLatLng([lat,lon]); if(accCircle) map.removeLayer(accCircle);
+    accCircle=L.circle([lat,lon],acc,{opacity:0.6,fillOpacity:0.08}).addTo(map);
+    if(firstFix){ map.setView([lat,lon], Math.max(map.getZoom(),12)); firstFix=false; }
+  }, function(err){
+    if(err.code===err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+    else toast("GPS-Fehler: "+err.message);
+  }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+}
+function requestOnceThenWatch(){
+  return new Promise(function(res,rej){
+    navigator.geolocation.getCurrentPosition(function(){ res(); }, function(e){ rej(e); },
+      { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
+  }).then(function(){ startWatch(); document.getElementById('loc').textContent="📍 GPS aktiv"; toast("GPS aktiv"); })
+   .catch(function(e){ if(e && e.code===e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
+                       else toast("GPS-Fehler: "+(e && e.message? e.message: e)); });
+}
+document.getElementById('loc').addEventListener('click', function(){
+  if(!('geolocation' in navigator)){ toast("Geolocation nicht verfügbar"); return; }
+  if(watchId===null) requestOnceThenWatch();
+  else { navigator.geolocation.clearWatch(watchId); watchId=null; firstFix=true;
+         if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
+         if(accCircle){ map.removeLayer(accCircle); accCircle=null; }
+         this.textContent="📍 Meine Position"; toast("GPS aus"); }
+});
 
-            // Interpretation 1: W,S,E,N [lon_min, lat_min, lon_max, lat_max] (Standard GeoJSON/OGC)
-            if (isPlausible(bbox[1], bbox[0], bbox[3], bbox[2])) {
-                interpretation = { lat_min: bbox[1], lon_min: bbox[0], lat_max: bbox[3], lon_max: bbox[2] };
-                console.log("Metadata BBOX interpreted as W,S,E,N (Standard).");
-            } 
-            // Interpretation 2: S,W,N,E [lat_min, lon_min, lat_max, lon_max]
-            else if (isPlausible(bbox[0], bbox[1], bbox[2], bbox[3])) {
-                interpretation = { lat_min: bbox[0], lon_min: bbox[1], lat_max: bbox[2], lon_max: bbox[3] };
-                console.warn("Metadata BBOX interpreted as S,W,N,E (Non-standard).");
-            } else {
-                 throw new Error("Metadata BBOX interpretation failed. Coordinates implausible. Raw BBOX: " + bbox.join(','));
-            }
-            
-            // Sicherstellen der internen Konsistenz (min < max)
-            DATASET_BOUNDS = {
-                lat_min: Math.min(interpretation.lat_min, interpretation.lat_max),
-                lon_min: Math.min(interpretation.lon_min, interpretation.lon_max),
-                lat_max: Math.max(interpretation.lat_min, interpretation.lat_max),
-                lon_max: Math.max(interpretation.lon_min, interpretation.lon_max)
-            };
-            
-            
-            // Erstelle detaillierte Debug-Nachricht für die Initialisierung
-            const fmt = (n) => n.toFixed(6);
-            const debugMsg = `DEBUG: Metadaten geladen.\nAPI Raw BBOX:\n[${bbox.map(fmt).join(', ')}]\n\nInterpretiert (S,W,N,E):\n[${fmt(DATASET_BOUNDS.lat_min)}, ${fmt(DATASET_BOUNDS.lon_min)}, ${fmt(DATASET_BOUNDS.lat_max)}, ${fmt(DATASET_BOUNDS.lon_max)}]\nEpsilon: ${CLAMP_EPSILON}`;
-            console.log(debugMsg);
+/* ======== Presets ======== */
+var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
+function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
+  document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
+applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value); });
+(function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
+  document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
 
-            // 2. Parse Temporal Extent
-            if (metadata.temporal_extent && metadata.temporal_extent.interval && metadata.temporal_extent.interval.length > 0) {
-                const interval = metadata.temporal_extent.interval[0];
-                if (interval.length === 2) {
-                    const startDate = interval[0] ? new Date(interval[0]) : null;
-                    const endDate = interval[1] ? new Date(interval[1]) : new Date();
-
-                    if (startDate && endDate && startDate < endDate) {
-                        DATASET_TEMPORAL = { start: startDate, end: endDate };
-                    }
-                }
-            }
-
-            // UI aktualisieren (Zeitraum anpassen)
-            initUI(DATASET_TEMPORAL);
-
-            updateStatus('Bereit.\n\n' + debugMsg, 0);
-
-        } catch (error) {
-            console.error("Metadata fetch failed:", error);
-            DATASET_BOUNDS = DOCUMENTED_EXTENT; // Use fallback
-            updateStatus('WARNUNG: Metadaten konnten nicht geladen werden. Nutze Fallback-Grenzen. Details: ' + error.message, 0);
-        } finally {
-            setLoadingState(false);
-        }
+/* ======== Punkt-Zeitreihe (Klick) ======== */
+var chartEl=document.getElementById('chartPanel'), chartTitle=document.getElementById('chartTitle');
+var chartSub=document.getElementById('chartSub'), chartMeta=document.getElementById('chartMeta');
+var closeChartBtn=document.getElementById('closeChart'), chartCanvas=document.getElementById('chartCanvas');
+var pointChart=null;
+closeChartBtn.addEventListener('click', function(){ if(pointChart){ pointChart.destroy(); pointChart=null; } chartEl.classList.remove('open'); });
+function kmToDegLat(km){ return km/111.0; } function kmToDegLon(km,lat){ return km/(111.320*Math.cos(lat*Math.PI/180)); }
+function buildPointBBox(lat,lon){ var halfKm=2.0, dLat=kmToDegLat(halfKm), dLon=kmToDegLon(halfKm,lat); return [lat-dLat, lon-dLon, lat+dLat, lon+dLon]; }
+function dist2Deg(lat1,lon1,lat2,lon2){ var x=(lon2-lon1)*Math.cos((lat1+lat2)*0.5*Math.PI/180), y=(lat2-lat1); return x*x+y*y; }
+function fetchPointTimeseries(lat,lon,start,end){
+  var bbox=buildPointBBox(lat,lon);
+  return loadFeatureCollection(start,end,bbox).then(function(fc){
+    var ts=fc.timestamps||[], feats=fc.features||[]; if(!feats.length) throw new Error("Keine Rasterzelle in der Nähe gefunden.");
+    var bestD=Infinity, bestVals=null, bestBB=null;
+    for(var i=0;i<feats.length;i++){
+      var f=feats[i], bb=bboxFromGeom(f.geometry), cx=0.5*(bb[0]+bb[2]), cy=0.5*(bb[1]+bb[3]);
+      var d2=dist2Deg(lat,lon,cy,cx), vals=extractValues(f.properties||{}, ts.length); if(!vals) continue;
+      if(d2<bestD){ bestD=d2; bestVals=vals; bestBB=bb; }
     }
-
-    function initMap() {
-        map = L.map('map').setView([47.7, 15.0], 8);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> | Daten: <a href="https://geosphere.at">GeoSphere Austria</a> (SPARTACUS)'
-        }).addTo(map);
+    if(!bestVals) throw new Error("Keine Werte im nächsten Raster gefunden.");
+    return { timestamps:ts, values:bestVals, cellBBox:bestBB };
+  });
+}
+function openChart(lat,lon,timestamps,values){
+  var labels=timestamps.map(function(iso){ return iso.slice(0,10); });
+  var sum=0, vmin=Infinity, vmax=-Infinity;
+  for(var i=0;i<values.length;i++){ var v=Number(values[i]); if(!isFinite(v)) v=0; sum+=v; if(v<vmin)vmin=v; if(v>vmax)vmax=v; }
+  if(pointChart){ pointChart.destroy(); pointChart=null; }
+  pointChart=new Chart(chartCanvas.getContext('2d'),{
+    type:'bar', data:{ labels:labels, datasets:[{ label:'RR (mm/Tag)', data:values }] },
+    options:{ responsive:true, animation:{duration:200},
+      scales:{ x:{ title:{display:true,text:'Tag'}, ticks:{maxRotation:0,autoSkip:true} },
+               y:{ title:{display:true,text:'mm'}, beginAtZero:true } },
+      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:function(ctx){ return (ctx.raw??0).toFixed(1)+' mm'; } } } }
     }
-
-    function initUI(temporalBounds = null) {
-        // Default: letzte 14 Tage bis gestern
-        let today = new Date();
-        today.setHours(12, 0, 0, 0);
-        
-        // Robustheit: Adjustiere Datum, falls außerhalb der Verfügbarkeit.
-        if (temporalBounds && temporalBounds.end && today > temporalBounds.end) {
-            today = new Date(temporalBounds.end.getTime());
-            // Handle T00:00:00Z end dates by stepping back one day
-            if (today.getUTCHours() === 0 && today.getUTCMinutes() === 0 && today.getUTCSeconds() === 0) {
-                 today.setUTCDate(today.getUTCDate() - 1);
-            }
-            today.setHours(12, 0, 0, 0);
-        }
-
-        const yesterday = new Date(today);
-        yesterday.setDate(today.getDate() - 1);
-        const fourteenDaysAgo = new Date(today);
-        fourteenDaysAgo.setDate(today.getDate() - 14);
-
-        const formatDate = (date) => date.toISOString().split('T')[0];
-
-        document.getElementById('dateEnd').value = formatDate(yesterday);
-        document.getElementById('dateStart').value = formatDate(fourteenDaysAgo);
-
-        const currentBbox = document.getElementById('bbox').value;
-        if (!currentBbox || Object.values(BBOX_PRESETS).includes(currentBbox)) {
-            setBboxPreset('NOE');
-        }
-    }
-
-    // --- UI Helpers & Event Handlers ---
-    
-    // Hilfsfunktion zum Kopieren in die Zwischenablage (synchroner Fallback)
-    function copyToClipboardSync(text) {
-        // Nutzt document.execCommand (deprecated, aber weit unterstützt für synchrone Aktionen im Browser)
-        try {
-            const textArea = document.createElement("textarea");
-            textArea.value = text;
-            textArea.style.position = "fixed";
-            textArea.style.opacity = "0";
-
-            document.body.appendChild(textArea);
-            textArea.focus();
-            textArea.select();
-
-            const successful = document.execCommand('copy');
-            document.body.removeChild(textArea);
-            return successful;
-        } catch (err) {
-            console.error("Synchronous copy failed: ", err);
-            return false;
-        }
-    }
-
-    function setBboxPreset(preset) {
-        const bboxStr = BBOX_PRESETS[preset];
-        document.getElementById('bbox').value = bboxStr;
-        const bbox = bboxStr.split(',').map(Number);
-        if (bbox.length === 4 && !bbox.some(isNaN)) {
-             try {
-                // Input format: lat_min, lon_min, lat_max, lon_max
-                map.fitBounds([[bbox[0], bbox[1]], [bbox[2], bbox[3]]]);
-             } catch (e) {
-                 console.error("Invalid preset bounds:", e);
-             }
-        }
-    }
-
-    function updateOpacity(value) {
-        document.getElementById('opacityValue').textContent = Math.round(value * 100) + '%';
-        if (precipitationOverlay) {
-            precipitationOverlay.setOpacity(value);
-        }
-    }
-
-    function updateStatus(message, progress) {
-        document.getElementById('status').textContent = message;
-        const progressBar = document.getElementById('progress-bar');
-        if (progress !== undefined) {
-            progressBar.style.width = progress + '%';
-            progressBar.textContent = progress > 5 ? progress + '%' : '';
-        } else {
-             progressBar.style.width = '0%';
-             progressBar.textContent = '';
-        }
-    }
-
-    function setLoadingState(loading) {
-        isLoading = loading;
-        
-        const boundsLoaded = DATASET_BOUNDS !== null;
-        document.getElementById('btnRender').disabled = isLoading || !boundsLoaded;
-        
-        if (isLoading) {
-            document.getElementById('btnExport').disabled = true;
-        }
-        
-        if (!isLoading && boundsLoaded) {
-            setTimeout(() => {
-                const pb = document.getElementById('progress-bar');
-                const statusText = document.getElementById('status').textContent;
-                if (pb.style.width !== '100%' && statusText.indexOf('Fertig') === -1) {
-                   // Detaillierte Fehlermeldungen (mit Debug Info) sichtbar lassen.
-                   if (statusText.indexOf('Bereit') === -1 && statusText.indexOf('WARNUNG') === -1 && statusText.indexOf('Debug Info') === -1) {
-                        updateStatus(statusText, 0);
-                   }
-                }
-            }, 500);
-        }
-    }
-
-    function handlePaletteChange() {
-        if (currentData) {
-            try {
-                updateStatus('Aktualisiere Palette...', 90);
-                const { canvas, minValue, maxValue } = renderCanvas(currentData);
-                updateMapOverlay(canvas, currentData.bounds, true);
-                updateLegend(minValue, maxValue);
-                updateStatus('Fertig (Palette aktualisiert).', 100);
-            } catch (error) {
-                console.error("Fehler beim Re-Rendering mit neuer Palette:", error);
-                updateStatus('Fehler beim Palette-Update.', 0);
-            }
-        } else {
-            updateLegend(0, 100);
-        }
-    }
-
-    // --- Core Logic ---
-    async function renderPrecipitation() {
-        if (isLoading || !DATASET_BOUNDS) {
-            return;
-        }
-
-        setLoadingState(true);
-        updateStatus('Vorbereitung...', 5);
-        
-        if (precipitationOverlay) {
-            map.removeLayer(precipitationOverlay);
-            precipitationOverlay = null;
-        }
-        currentData = null; 
-
-        const start = document.getElementById('dateStart').value;
-        const end = document.getElementById('dateEnd').value;
-        let bboxInput = document.getElementById('bbox').value;
-
-        if (!start || !end || !bboxInput) {
-            alert("Bitte Zeitraum und Bounding Box angeben.");
-            updateStatus('Fehler: Ungültige Eingabe.', 0);
-            setLoadingState(false);
-            return;
-        }
-
-        let clampedBboxArray;
-        let requestUrl = '';
-        
-        try {
-            // 1. Validate Temporal Range
-            if (DATASET_TEMPORAL) {
-                const requestedStart = new Date(start + 'T12:00:00Z');
-                const requestedEnd = new Date(end + 'T12:00:00Z');
-
-                if (requestedEnd < DATASET_TEMPORAL.start || requestedStart > DATASET_TEMPORAL.end) {
-                    const availableStart = DATASET_TEMPORAL.start.toISOString().split('T')[0];
-                    const availableEnd = DATASET_TEMPORAL.end.toISOString().split('T')[0];
-                    throw new Error(`Zeitraum ungültig. Verfügbar: ${availableStart} bis ${availableEnd}.`);
-                }
-            }
-
-            // 2. Clamp BBOX
-            // Dies kann einen Fehler werfen, wenn die BBOX vollständig außerhalb liegt (inkl. Debug-Info).
-            clampedBboxArray = clampBbox(bboxInput);
-            
-            document.getElementById('bbox').value = clampedBboxArray.join(',');
-            updateStatus('BBOX geklammert. Lade Daten von GeoSphere API...', 10);
-
-            // 3. Fetch Data
-            requestUrl = buildApiUrl(start, end, clampedBboxArray);
-
-            console.log("Request URL:", requestUrl);
-            const response = await fetch(requestUrl);
-            
-            if (!response.ok) {
-                const errorDetailsRaw = await response.text().catch(() => 'Keine Details verfügbar.');
-                let apiErrorDetail = errorDetailsRaw.substring(0, 200);
-                let isBboxError = false;
-
-                try {
-                    const errorJson = JSON.parse(errorDetailsRaw);
-                    if (errorJson.detail) {
-                        apiErrorDetail = errorJson.detail;
-                        // Prüfe auf den spezifischen Fehler, der gemeldet wurde
-                        if (apiErrorDetail.includes("outside of dataset bounds")) {
-                            isBboxError = true;
-                        }
-                    }
-                } catch (e) { /* Not JSON */ }
-
-                // Wenn die API die BBOX ablehnt (trotz Clamping): Detailliertes Debugging.
-                // Wir behandeln HTTP 400 generell als potentiellen BBOX Fehler in diesem Kontext.
-                if (isBboxError || response.status === 400) {
-                    const fmt = (n) => n.toFixed(6);
-                    const debugInfo = `\n\n--- API Error Debug Info ---\n` +
-                                      `Status: ${response.status}\n` +
-                                      `API Response: ${apiErrorDetail}\n\n` +
-                                      (isBboxError ? `!! API hat die Anfrage trotz Clamping abgelehnt (Outside Bounds) !!\n\n` : "") +
-                                      `Requested Clamped BBOX (S,W,N,E):\n[${clampedBboxArray.map(fmt).join(', ')}]\n\n` +
-                                      `Dataset Bounds (S,W,N,E):\n[${fmt(DATASET_BOUNDS.lat_min)}, ${fmt(DATASET_BOUNDS.lon_min)}, ${fmt(DATASET_BOUNDS.lat_max)}, ${fmt(DATASET_BOUNDS.lon_max)}]\n\n` +
-                                      `Epsilon: ${CLAMP_EPSILON.toFixed(6)}\n\n` +
-                                      `Full Request URL:\n${requestUrl}`;
-
-                    // Copy to clipboard
-                    const copySuccess = copyToClipboardSync(debugInfo);
-                    const clipboardMsg = copySuccess ? "\n\n(Debug Info in Zwischenablage kopiert.)" : "";
-
-                    throw new Error(`API Fehler aufgetreten.` + debugInfo + clipboardMsg);
-                }
-                
-                // Andere API Fehler
-                throw new Error(`API Fehler ${response.status}: ${apiErrorDetail}`);
-            }
-            
-            updateStatus('Daten empfangen, verarbeite GeoJSON...', 40);
-            const geojsonData = await response.json();
-
-            // 4. Process Data
-            updateStatus('Aggregiere Niederschlagsdaten (Summe)...', 60);
-            const processedData = processApiData(geojsonData);
-            currentData = processedData;
-
-            // 5. Render Data
-            updateStatus('Rendere Canvas...', 85);
-            const { canvas, minValue, maxValue } = renderCanvas(processedData);
-            
-            // 6. Update Map and Legend
-            updateMapOverlay(canvas, processedData.bounds);
-            updateLegend(minValue, maxValue);
-
-            updateStatus('Fertig.', 100);
-            document.getElementById('btnExport').disabled = false;
-
-        } catch (error) {
-            console.error("Fehler beim Rendern:", error);
-            // Display error (enthält bereits Debug-Info, falls von clampBbox oder API-Fetch geworfen)
-            let errorMessage = 'Fehler: ' + error.message;
-            updateStatus(errorMessage, 0);
-            
-            // Robustheit: Fallback rendern
-            let fallbackBbox = clampedBboxArray;
-            if (!fallbackBbox) {
-                try {
-                    const bbox = bboxInput.split(',').map(s => parseFloat(s.trim()));
-                    if (bbox.length === 4 && !bbox.some(isNaN)) {
-                        fallbackBbox = bbox;
-                    }
-                } catch (e) { /* ignore parsing errors */ }
-            }
-            renderFallback(fallbackBbox);
-        } finally {
-            setLoadingState(false);
-        }
-    }
-
-    // --- BBOX Clamping ---
-    // Robustheit: BBOX an Dataset-Grenzen clampen.
-    function clampBbox(bboxString) {
-        if (!DATASET_BOUNDS) {
-            throw new Error("Systemfehler: Dataset-Grenzen sind noch nicht verfügbar.");
-        }
-
-        const bbox = bboxString.split(',').map(s => parseFloat(s.trim()));
-        // Expects lat_min, lon_min, lat_max, lon_max
-        if (bbox.length !== 4 || bbox.some(isNaN)) {
-            throw new Error("Ungültiges BBOX Format (erwartet: lat_min, lon_min, lat_max, lon_max).");
-        }
-
-        let [lat_min, lon_min, lat_max, lon_max] = bbox;
-
-        if (lat_min > lat_max) [lat_min, lat_max] = [lat_max, lat_min];
-        if (lon_min > lon_max) [lon_min, lon_max] = [lon_max, lon_min];
-
-        // Define safe boundaries by applying Epsilon
-        const SAFE_LAT_MIN = DATASET_BOUNDS.lat_min + CLAMP_EPSILON;
-        const SAFE_LON_MIN = DATASET_BOUNDS.lon_min + CLAMP_EPSILON;
-        const SAFE_LAT_MAX = DATASET_BOUNDS.lat_max - CLAMP_EPSILON;
-        const SAFE_LON_MAX = DATASET_BOUNDS.lon_max - CLAMP_EPSILON;
-
-        // Clamp the input BBOX
-        const clamped_lat_min = Math.max(lat_min, SAFE_LAT_MIN);
-        const clamped_lon_min = Math.max(lon_min, SAFE_LON_MIN);
-        const clamped_lat_max = Math.min(lat_max, SAFE_LAT_MAX);
-        const clamped_lon_max = Math.min(lon_max, SAFE_LON_MAX);
-
-        // Ensure clamped bbox is still valid (not inverted after clamping).
-        if (clamped_lat_min >= clamped_lat_max || clamped_lon_min >= clamped_lon_max) {
-             console.warn("Requested BBOX is entirely outside the dataset extent.");
-             
-             // Detaillierte Debug-Informationen bereitstellen.
-             const fmt = (n) => n.toFixed(6); 
-             // Format: (S,W,N,E) = (LatMin, LonMin, LatMax, LonMax)
-             const debugInfo = `\n\n--- Clamping Debug Info (S,W,N,O) ---\n` +
-                               `Input BBOX:\n[${fmt(lat_min)}, ${fmt(lon_min)}, ${fmt(lat_max)}, ${fmt(lon_max)}]\n\n` +
-                               `Dataset Bounds (Ermittelt):\n[${fmt(DATASET_BOUNDS.lat_min)}, ${fmt(DATASET_BOUNDS.lon_min)}, ${fmt(DATASET_BOUNDS.lat_max)}, ${fmt(DATASET_BOUNDS.lon_max)}]\n\n` +
-                               `Safe Bounds (inkl. Epsilon ${CLAMP_EPSILON.toFixed(6)}):\n[${fmt(SAFE_LAT_MIN)}, ${fmt(SAFE_LON_MIN)}, ${fmt(SAFE_LAT_MAX)}, ${fmt(SAFE_LON_MAX)}]`;
-
-            const errorMessage = "Die angeforderte BBOX liegt vollständig außerhalb des Dataset-Bereichs.";
-            const fullErrorText = errorMessage + debugInfo;
-
-            // Kopiere in Zwischenablage
-            const copySuccess = copyToClipboardSync(fullErrorText);
-             
-            let clipboardMsg = copySuccess
-                ? "\n\n(Debug Info wurde automatisch in die Zwischenablage kopiert.)"
-                : "\n\n(Automatisches Kopieren fehlgeschlagen.)";
-
-             throw new Error(fullErrorText + clipboardMsg);
-        }
-
-        // Runden auf 6 Nachkommastellen
-        return [clamped_lat_min, clamped_lon_min, clamped_lat_max, clamped_lon_max].map(v => parseFloat(v.toFixed(6)));
-    }
-
-    // --- API Interaction ---
-    function buildApiUrl(start, end, bboxArray) {
-        // GeoSphere API erwartet BBOX in W,S,E,N Reihenfolge (lon_min, lat_min, lon_max, lat_max)
-        const lon_min = bboxArray[1].toFixed(6);
-        const lat_min = bboxArray[0].toFixed(6);
-        const lon_max = bboxArray[3].toFixed(6);
-        const lat_max = bboxArray[2].toFixed(6);
-        
-        const bboxWsen = `${lon_min},${lat_min},${lon_max},${lat_max}`;
-
-        const params = new URLSearchParams({
-            parameters: PARAMETER,
-            start: start + 'T00:00:00Z',
-            end: end + 'T23:59:59Z', 
-            bbox: bboxWsen,
-            crs: '4326' 
-        });
-        return `${API_HOST}${DATASET_ENDPOINT}?${params.toString()}`;
-    }
-
-    // --- Data Processing ---
-    function processApiData(geojsonData) {
-        if (!geojsonData || geojsonData.type !== 'FeatureCollection' || !geojsonData.features || geojsonData.features.length === 0) {
-            throw new Error("Keine Daten im API Response gefunden (leere FeatureCollection).");
-        }
-
-        // 1. Determine grid dimensions
-        const lats = new Set();
-        const lons = new Set();
-        const coordKey = (coord) => coord.toFixed(8);
-
-        geojsonData.features.forEach(feature => {
-            if (feature.geometry && feature.geometry.type === 'Point') {
-                // GeoJSON coordinates are [Longitude, Latitude]
-                const coords = feature.geometry.coordinates;
-                lons.add(coordKey(coords[0]));
-                lats.add(coordKey(coords[1]));
-            }
-        });
-
-        // 2. Sort coordinates (North to South, West to East)
-        const sortedLats = Array.from(lats).map(Number).sort((a, b) => b - a);
-        const sortedLons = Array.from(lons).map(Number).sort((a, b) => a - b);
-
-        const height = sortedLats.length;
-        const width = sortedLons.length;
-
-        // 3. Initialize grid and lookup maps
-        const gridData = Array(height).fill(0).map(() => Array(width).fill(0));
-        const validValues = [];
-        const latIndexMap = new Map(sortedLats.map((lat, index) => [coordKey(lat), index]));
-        const lonIndexMap = new Map(sortedLons.map((lon, index) => [coordKey(lon), index]));
-
-        // 4. Aggregate data
-        geojsonData.features.forEach(feature => {
-            if (!feature.geometry || feature.geometry.type !== 'Point') return;
-
-            const coords = feature.geometry.coordinates;
-            const rowIndex = latIndexMap.get(coordKey(coords[1]));
-            const colIndex = lonIndexMap.get(coordKey(coords[0]));
-
-            if (rowIndex !== undefined && colIndex !== undefined) {
-                const props = feature.properties;
-                let timeSeries = (props && props.data && props.data[PARAMETER]) ? props.data[PARAMETER] : null;
-
-                let sum = 0;
-                
-                if (timeSeries && Array.isArray(timeSeries)) {
-                    // Aggregation: Summe, negative/fehlende Werte ignorieren
-                    timeSeries.forEach(value => {
-                        if (value !== null && value >= 0 && value !== MISSING_VALUE) {
-                            sum += value;
-                        }
-                    });
-                }
-                
-                gridData[rowIndex][colIndex] = sum;
-                if (sum > 0) {
-                    validValues.push(sum);
-                }
-            }
-        });
-
-        // 5. Calculate precise bounds for ImageOverlay
-        // Verwende 0.009 als Näherung für 1km (passend zu Epsilon), falls nur eine Zeile/Spalte vorhanden ist.
-        let latStep = height > 1 ? Math.abs(sortedLats[0] - sortedLats[1]) : 0.009; 
-        let lonStep = width > 1 ? Math.abs(sortedLons[0] - sortedLons[1]) : (0.009 / Math.cos(sortedLats[0] * Math.PI / 180));
-
-        // Bounds [SW corner, NE corner]
-        const bounds = L.latLngBounds(
-            [sortedLats[height - 1] - latStep / 2, sortedLons[0] - lonStep / 2], // SW
-            [sortedLats[0] + latStep / 2, sortedLons[width - 1] + lonStep / 2]  // NE
-        );
-
-        return { gridData, width, height, validValues, bounds };
-    }
-
-    // Helper to calculate percentile
-    function calculatePercentile(data, percentile) {
-        if (data.length === 0) return 0;
-        const sortedData = [...data].sort((a, b) => a - b);
-        const index = Math.ceil(percentile * sortedData.length) - 1;
-        return sortedData[Math.max(0, index)];
-    }
-
-    // --- Visualization (Canvas Rendering) ---
-    function renderCanvas(processedData) {
-        const { gridData, width, height, validValues } = processedData;
-        const paletteName = document.getElementById('palette').value;
-        const colorFunc = getColorFunction(paletteName);
-
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        const imageData = ctx.createImageData(width, height);
-        const imgData = imageData.data;
-
-        // Darstellung: 0–98%-Skalierung (robuste Range)
-        const minValue = 0;
-        let maxValue = calculatePercentile(validValues, 0.98);
-
-        if (maxValue <= 0 && validValues.length > 0) {
-             maxValue = Math.max(...validValues);
-        } 
-        
-        if (maxValue <= 0) {
-            maxValue = 1;
-        }
-        
-        const range = maxValue - minValue;
-
-        for (let y = 0; y < height; y++) {
-            for (let x = 0; x < width; x++) {
-                const value = gridData[y][x];
-                const index = (y * width + x) * 4;
-
-                if (value > 0) {
-                    const normalized = Math.min(1, Math.max(0, (value - minValue) / range));
-                    const color = colorFunc(normalized);
-
-                    imgData[index] = color[0];     // R
-                    imgData[index + 1] = color[1]; // G
-                    imgData[index + 2] = color[2]; // B
-                    imgData[index + 3] = 255;      // A
-                } else {
-                    imgData[index + 3] = 0;
-                }
-            }
-        }
-
-        ctx.putImageData(imageData, 0, 0);
-        return { canvas, minValue, maxValue };
-    }
-
-    // --- Map Integration ---
-    function updateMapOverlay(canvas, bounds, skipFitBounds = false) {
-        if (precipitationOverlay) {
-            map.removeLayer(precipitationOverlay);
-        }
-
-        currentCanvas = canvas;
-        const opacity = document.getElementById('opacity').value;
-
-        // Darstellung: Canvas → Leaflet ImageOverlay (keine Blend-Modes)
-        precipitationOverlay = L.imageOverlay(canvas.toDataURL(), bounds, {
-            opacity: opacity,
-            interactive: false
-        }).addTo(map);
-
-        if (!skipFitBounds) {
-             map.fitBounds(bounds, { padding: [10, 10] });
-        }
-    }
-
-    // --- Legend ---
-    function updateLegend(min, max) {
-        document.getElementById('legend-min').textContent = min.toFixed(1);
-        
-        if (typeof max === 'number') {
-             document.getElementById('legend-max').textContent = max.toFixed(1) + '+';
-        } else {
-            document.getElementById('legend-max').textContent = max;
-        }
-
-        const canvas = document.getElementById('legend-canvas');
-        const dpr = window.devicePixelRatio || 1;
-        const rect = canvas.getBoundingClientRect();
-        
-        if (rect.width > 0 && rect.height > 0) {
-            canvas.width = rect.width * dpr;
-            canvas.height = rect.height * dpr;
-        } else {
-            canvas.width = (canvas.clientWidth || 280) * dpr;
-            canvas.height = (canvas.clientHeight || 25) * dpr;
-        }
-
-        const ctx = canvas.getContext('2d');
-        const width = canvas.width;
-        const height = canvas.height;
-
-        ctx.clearRect(0, 0, width, height);
-
-        const gradient = ctx.createLinearGradient(0, 0, width, 0);
-        const paletteName = document.getElementById('palette').value;
-        const colorFunc = getColorFunction(paletteName);
-
-        const steps = 50;
-        for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const color = colorFunc(t);
-            gradient.addColorStop(t, `rgb(${color[0]}, ${color[1]}, ${color[2]})`);
-        }
-
-        ctx.fillStyle = gradient;
-        ctx.fillRect(0, 0, width, height);
-    }
-
-    // --- Robustness & Fallback ---
-    // Robustheit: bei Fehlern ein Schachbrett-Fallback rendern
-    function renderFallback(bboxArray) {
-        if (!Array.isArray(bboxArray) || bboxArray.length !== 4) {
-            updateLegend(0, '-');
-            return;
-        }
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = 256;
-        canvas.height = 256;
-        const ctx = canvas.getContext('2d');
-
-        // Draw checkerboard pattern
-        const tileSize = 16;
-        ctx.fillStyle = '#ffffff'; 
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.fillStyle = '#f0f0f0'; 
-
-        for (let y = 0; y < canvas.height; y += tileSize) {
-            for (let x = 0; x < canvas.width; x += tileSize) {
-                if ((Math.floor(x / tileSize) + Math.floor(y / tileSize)) % 2 === 0) {
-                    ctx.fillRect(x, y, tileSize, tileSize);
-                }
-            }
-        }
-        
-        // Add text
-        ctx.fillStyle = '#D32F2F';
-        ctx.font = 'bold 18px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText('Fehler beim Laden/Rendern', canvas.width / 2, canvas.height / 2 - 10);
-        ctx.font = '14px sans-serif';
-        ctx.fillText('Details siehe Status/Konsole', canvas.width / 2, canvas.height / 2 + 15);
-
-        if (bboxArray[0] < bboxArray[2] && bboxArray[1] < bboxArray[3]) {
-             const bounds = L.latLngBounds(
-                [bboxArray[0], bboxArray[1]],
-                [bboxArray[2], bboxArray[3]]
-            );
-            updateMapOverlay(canvas, bounds, true); // skipFitBounds = true
-        }
-       
-        updateLegend(0, '-');
-    }
-
-    // --- Export ---
-    function exportPNG() {
-        if (!currentCanvas) return;
-
-        const start = document.getElementById('dateStart').value;
-        const end = document.getElementById('dateEnd').value;
-        const filename = `Niederschlagssumme_SPARTACUS_${start}_bis_${end}.png`;
-
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = currentCanvas.toDataURL('image/png');
-        link.click();
-    }
-
-    // --- Color Palettes Implementation ---
-
-    function getColorFunction(name) {
-        switch (name) {
-            case 'spectral': return colorSpectral;
-            case 'rainbow': return colorRainbow;
-            case 'viridis':
-            default: return colorViridis;
-        }
-    }
-
-    // Helper for color interpolation
-    function interpolateColor(c1, c2, t) {
-        return [
-            Math.round(c1[0] * (1 - t) + c2[0] * t),
-            Math.round(c1[1] * (1 - t) + c2[1] * t),
-            Math.round(c1[2] * (1 - t) + c2[2] * t)
-        ];
-    }
-
-    // Simple Rainbow
-    function colorRainbow(t) {
-        const hue = (1 - t) * 240;
-        return hslToRgb(hue / 360, 0.9, 0.5);
-    }
-
-    // Simple Spectral
-    function colorSpectral(t) {
-        if (t < 0.25) { // Blue to Cyan
-             return interpolateColor([0, 0, 255], [0, 255, 255], t / 0.25);
-        } else if (t < 0.5) { // Cyan to Green
-            return interpolateColor([0, 255, 255], [0, 200, 0], (t - 0.25) / 0.25);
-        } else if (t < 0.75) { // Green to Yellow
-            return interpolateColor([0, 200, 0], [255, 255, 0], (t - 0.5) / 0.25);
-        } else { // Yellow to Red
-            return interpolateColor([255, 255, 0], [255, 0, 0], (t - 0.75) / 0.25);
-        }
-    }
-
-    // Viridis implementation using Lookup Table
-    const VIRIDIS_DATA = [
-        [68,1,84],[68,2,84],[68,2,85],[68,3,85],[68,4,86],[68,5,86],[68,6,87],[68,7,88],[68,8,88],[68,9,89],[69,10,90],[69,11,90],[69,12,91],[69,13,92],[69,14,93],[69,15,93],[69,16,94],[69,17,95],[69,18,96],[69,19,97],[69,20,98],[69,21,98],[69,22,99],[69,23,100],[69,24,101],[69,26,102],[69,27,103],[69,28,104],[68,29,105],[68,30,106],[68,31,107],[68,32,107],[68,33,108],[68,34,109],[67,35,110],[67,36,111],[67,37,112],[66,38,113],[66,39,114],[66,40,115],[65,41,116],[65,42,116],[65,43,117],[64,44,118],[64,45,119],[64,46,120],[63,47,121],[63,48,121],[62,49,122],[62,50,123],[61,51,124],[61,52,125],[60,53,126],[60,54,126],[59,55,127],[59,56,128],[58,57,129],[58,58,129],[57,59,130],[57,60,131],[56,61,131],[56,62,132],[55,63,133],[55,64,133],[54,65,134],[53,66,134],[53,67,135],[52,68,135],[52,69,136],[51,70,137],[50,71,137],[50,72,137],[49,73,138],[49,74,138],[48,75,139],[48,76,139],[47,77,140],[47,78,140],[46,79,140],[46,80,141],[45,81,141],[45,82,141],[44,83,142],[44,84,142],[43,85,142],[43,86,142],[42,87,142],[42,88,142],[41,89,143],[41,90,143],[40,91,143],[40,92,143],[39,93,143],[39,94,143],[38,95,143],[38,96,142],[37,97,142],[37,98,142],[36,99,142],[36,100,142],[35,101,142],[35,102,141],[35,103,141],[34,104,141],[34,105,141],[33,106,140],[33,107,140],[33,108,140],[32,109,139],[32,110,139],[32,111,138],[31,112,138],[31,113,138],[31,114,137],[30,115,137],[30,116,136],[30,117,136],[29,118,135],[29,120,135],[29,121,134],[28,122,133],[28,123,133],[28,124,132],[28,125,132],[27,126,131],[27,127,130],[27,128,130],[27,129,129],[27,130,128],[26,132,128],[26,133,127],[26,134,126],[27,135,126],[27,136,125],[27,137,124],[27,138,123],[27,139,123],[27,141,122],[28,142,121],[28,143,120],[28,144,119],[29,145,118],[29,146,118],[30,147,117],[30,148,116],[31,150,115],[31,151,114],[32,152,113],[33,153,112],[33,154,111],[34,155,110],[35,157,109],[36,158,108],[37,159,107],[38,160,106],[39,161,105],[40,162,104],[41,163,103],[42,164,102],[43,165,101],[44,167,100],[45,168,99],[47,169,98],[48,170,97],[49,171,96],[51,172,95],[52,173,94],[53,174,93],[55,175,92],[56,176,91],[58,177,90],[59,178,89],[61,179,88],[62,180,87],[64,181,86],[66,182,85],[67,183,84],[69,184,83],[71,185,81],[72,186,80],[74,187,79],[76,188,78],[78,189,77],[80,190,76],[81,191,75],[83,192,74],[85,193,73],[87,194,71],[89,195,70],[91,196,69],[93,197,68],[95,198,67],[97,199,66],[99,200,64],[101,201,63],[103,201,62],[105,202,61],[107,203,60],[109,204,59],[111,205,57],[114,206,56],[116,207,55],[118,208,54],[120,208,52],[123,209,51],[125,210,50],[127,211,49],[130,212,47],[132,213,46],[134,213,45],[137,214,44],[139,215,42],[142,216,41],[144,216,40],[147,217,39],[149,218,37],[152,219,36],[154,219,35],[157,220,34],[160,221,32],[162,221,31],[165,222,30],[168,223,29],[170,223,28],[173,224,27],[176,225,26],[178,225,25],[181,226,24],[184,227,23],[187,227,22],[190,228,21],[192,228,20],[195,229,19],[198,230,18],[201,230,17],[204,231,16],[207,231,16],[210,232,15],[213,232,14],[216,233,13],[219,233,12],[221,234,11],[224,234,10],[227,235,10],[230,235,9],[233,236,8],[236,236,7],[239,237,7],[242,237,6],[245,238,5],[248,238,4],[251,239,3],[253,239,3]
-    ];
-
-    function colorViridis(t) {
-        t = Math.max(0, Math.min(1, t));
-        const n = VIRIDIS_DATA.length - 1;
-        const i = Math.floor(t * n);
-        const j = Math.ceil(t * n);
-        
-        if (i === j) {
-            return VIRIDIS_DATA[i];
-        }
-
-        const f = t * n - i;
-        return interpolateColor(VIRIDIS_DATA[i], VIRIDIS_DATA[j], f);
-    }
-
-    // HSL to RGB conversion helper
-    function hslToRgb(h, s, l) {
-        let r, g, b;
-
-        if (s == 0) {
-            r = g = b = l;
-        } else {
-            const hue2rgb = (p, q, t) => {
-                if (t < 0) t += 1;
-                if (t > 1) t -= 1;
-                if (t < 1/6) return p + (q - p) * 6 * t;
-                if (t < 1/2) return q;
-                if (t < 2/3) return p + (q - p) * (2/3 - t) * 6;
-                return p;
-            }
-
-            const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-            const p = 2 * l - q;
-            r = hue2rgb(p, q, h + 1/3);
-            g = hue2rgb(p, q, h);
-            b = hue2rgb(p, q, h - 1/3);
-        }
-
-        return [Math.round(r * 255), Math.round(g * 255), Math.round(b * 255)];
-    }
-
-    // Initialize the application when the DOM is ready
-    document.addEventListener('DOMContentLoaded', () => {
-        if (document.readyState === 'loading') return;
-        initialize();
-    });
-    if (document.readyState !== 'loading') {
-        initialize();
-    }
+  });
+  chartTitle.innerHTML='<strong>RR (letzte 14 Tage)</strong>';
+  chartSub.textContent='Punkt: '+lat.toFixed(5)+', '+lon.toFixed(5);
+  chartMeta.innerHTML=`<span>Zeitraum: <code>${labels[0]} – ${labels[labels.length-1]}</code></span>
+                       <span>Summe: <code>${sum.toFixed(1)} mm</code></span>
+                       <span>Min: <code>${isFinite(vmin)?vmin.toFixed(1):'–'} mm</code></span>
+                       <span>Max: <code>${isFinite(vmax)?vmax.toFixed(1):'–'} mm</code></span>`;
+  chartEl.classList.add('open');
+}
+map.on('click', function(e){
+  var lat=e.latlng.lat, lon=e.latlng.lng;
+  if(clickMarker) map.removeLayer(clickMarker);
+  clickMarker=L.circleMarker([lat,lon],{radius:6,color:'#111',fillColor:'#4f46e5',fillOpacity:0.9}).addTo(map);
+  toast('Lade Zeitreihe …');
+  fetchPointTimeseries(lat,lon,startEl.value,endEl.value).then(function(res){ openChart(lat,lon,res.timestamps,res.values); })
+  .catch(function(err){ console.error(err); alert("Zeitreihe fehlgeschlagen: "+(err && err.message? err.message: err)); });
+});
+
+/* ======== Auto-Render ======== */
+window.addEventListener('load', function(){ setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150); });
 </script>
-
 </body>
 </html>
