@@ -11,6 +11,12 @@
   html,body,#map{height:100%;margin:0}
   #map{background:#eef2f7}
 
+  /* ► Overlay: Schwarze Kartenteile sollen durchscheinen */
+  /*    multiply sorgt dafür, dass schwarzer Untergrund sichtbar bleibt */
+  .leaflet-overlay-pane img.leaflet-image-layer{
+    mix-blend-mode:multiply;
+  }
+
   /* Drawer (Einstellungs-Panel) */
   #drawer{
     position:fixed; z-index:5000;
@@ -294,7 +300,7 @@ function updateLegend(vmin,vmax){ var c=document.getElementById('legendCanvas');
   for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
     for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
   ctx.putImageData(img,0,0); var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
-  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm'; if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1)+' mm'; }
+  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm'; if(vmaxEl) vminEl && (vmaxEl.textContent=vmax.toFixed(1)+' mm'); }
 
 /* ======== Stats ======== */
 function quantile(sorted,q){ if(!sorted.length) return NaN; var pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
@@ -431,7 +437,8 @@ function renderToCanvas(cells,bounds){
     for (var y=py0; y<=py1; y++){ var idx=(y*PX_W+px0)*4; for (var x=px0; x<=px1; x++){ data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4; } }
     done++; if((done%1500)===0) progress(done/cells.length);
   }
-  ctx.putImageData(img,0,0); progress(1); return { canvas:cvs, width:PX_W, height:PX_H };
+  var ctx2=cvs.getContext('2d');
+  ctx2.putImageData(img,0,0); progress(1); return { canvas:cvs, width:PX_W, height:PX_H };
 }
 
 /* ======== Overlay ======== */
@@ -451,7 +458,12 @@ function placeOverlayFromCanvas(rr){
   var url=rr.canvas.toDataURL("image/png");
   if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
   overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
-  overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
+  overlay.on('load', function(){
+    /* ► Sicherheitshalber auch hier setzen */
+    if(overlay && overlay._image){ overlay._image.style.mixBlendMode='multiply'; }
+    applyTransformOnOverlay(overlay, baseBoundsObj);
+    updateUI();
+  });
 }
 function rerenderSameData(){ if(!lastCells||!baseBoundsObj){ toast("Bitte erst laden"); return; } progress(0.05); var rr=renderToCanvas(lastCells, baseBoundsObj); placeOverlayFromCanvas(rr); }
 
