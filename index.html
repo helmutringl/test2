@@ -9,14 +9,20 @@
 <style>
   *{box-sizing:border-box}
   html,body,#map{height:100%;margin:0}
-  #map{background:#eef2f7}
+  #map{background:#eef2f7; isolation:isolate;} /* Isolation = Blend funktioniert zuverlässig in Chrome */
 
-  /* Overlay: Schwarz der Basiskarte soll durchscheinen */
-  .leaflet-overlay-pane img.leaflet-image-layer{
-    mix-blend-mode:multiply;
+  /* Basiskarte: optionaler „Signalboost“ per CSS-Variable */
+  .leaflet-tile-pane{
+    filter: var(--tileFilter, none);
+    will-change: filter;
   }
 
-  /* Drawer */
+  /* Overlay: Blend per CSS-Variable – default overlay => Schwarz & Weiß bleiben sichtbar */
+  .leaflet-overlay-pane img.leaflet-image-layer{
+    mix-blend-mode: var(--blend, overlay);
+  }
+
+  /* Drawer (Einstellungs-Panel) */
   #drawer{
     position:fixed; z-index:5000;
     top:calc(env(safe-area-inset-top,0) + 60px);
@@ -164,7 +170,7 @@
     </div>
 
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(wirkt jetzt immer)</span></div>
+    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(wirkt live)</span></div>
     <div class="row">
       <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="200"> <span id="tileXVal">200%</span></label>
       <code id="tileXpx">– px</code>
@@ -183,6 +189,30 @@
           <option value="viridis">Viridis (grün–blau)</option>
         </select>
       </label>
+    </div>
+
+    <!-- Blend-Mode & Karten-Signal -->
+    <div class="row">
+      <label>Blend:&nbsp;
+        <select id="blendMode">
+          <option value="overlay">overlay (empfohlen)</option>
+          <option value="multiply">multiply</option>
+          <option value="darken">darken</option>
+          <option value="color-burn">color-burn</option>
+        </select>
+      </label>
+      <span class="hint">„overlay“ lässt Schwarz &amp; Weiß durchscheinen</span>
+    </div>
+
+    <div class="row">
+      <label>Kartensignal:&nbsp;
+        <select id="tileFilterSel">
+          <option value="none">aus</option>
+          <option value="contrast(1.15) saturate(1.10) brightness(1.05)">Boost leicht</option>
+          <option value="contrast(1.35) saturate(1.20) brightness(1.05)">Boost stark</option>
+        </select>
+      </label>
+      <span class="hint">hebt OSM-Karte hervor</span>
     </div>
   </div>
 
@@ -400,7 +430,7 @@ function persist(){
 }
 
 /* ======== Renderer ======== */
-/* WICHTIG: Tile-Scale wirkt jetzt IMMER (auch bei cw/ch > 1) */
+/* WICHTIG: Tile-Scale wirkt IMMER (auch bei cw/ch > 1) */
 function renderToCanvas(cells,bounds){
   var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
   var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
@@ -465,13 +495,50 @@ function applyTransformOnOverlay(ov,base){
   var adj=L.latLngBounds([south,west],[north,east]); ov.setBounds(adj);
   if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
 }
+
+/* ======== Blend-Mode & Tile-Filter ======== */
+var blendMode = localStorage.getItem('ovBlendMode') || 'overlay';
+function applyBlend(){
+  document.documentElement.style.setProperty('--blend', blendMode);
+  if (overlay && overlay._image){
+    overlay._image.style.mixBlendMode = blendMode;
+  }
+}
+function bindBlendRef(){
+  var blendSel = document.getElementById('blendMode');
+  if (blendSel){
+    blendSel.value = blendMode;
+    blendSel.addEventListener('change', function(){
+      blendMode = this.value;
+      localStorage.setItem('ovBlendMode', blendMode);
+      applyBlend();
+    });
+  }
+}
+var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
+function applyTileFilter(){
+  document.documentElement.style.setProperty('--tileFilter', tileFilter);
+}
+function bindTileFilterRef(){
+  var sel = document.getElementById('tileFilterSel');
+  if (sel){
+    sel.value = tileFilter;
+    sel.addEventListener('change', function(){
+      tileFilter = this.value;
+      localStorage.setItem('ovTileFilter', tileFilter);
+      applyTileFilter();
+    });
+  }
+}
+
+/* ======== Overlay-Aufbau ======== */
 function placeOverlayFromCanvas(rr){
   lastCanvas=rr.canvas;
   var url=rr.canvas.toDataURL("image/png");
   if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
   overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
   overlay.on('load', function(){
-    if(overlay && overlay._image){ overlay._image.style.mixBlendMode='multiply'; }
+    applyBlend(); /* Blend anwenden (auch bei 100% Opacity sichtbar) */
     applyTransformOnOverlay(overlay, baseBoundsObj);
     updateUI();
   });
@@ -616,6 +683,9 @@ map.on('click', function(e){
 
 /* ======== Live-Listener für Tile & Justage ======== */
 (function(){
+  bindBlendRef(); applyBlend();
+  bindTileFilterRef(); applyTileFilter();
+
   let debounce;
   function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); }, 120); }
 
@@ -640,16 +710,17 @@ map.on('click', function(e){
 
   // Reset aller lokalen Justagen
   document.getElementById('resetTuning').addEventListener('click', ()=>{
-    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH'].forEach(localStorage.removeItem.bind(localStorage));
+    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH','ovBlendMode','ovTileFilter'].forEach(localStorage.removeItem.bind(localStorage));
     state.tileScaleX=2; state.tileScaleY=2; state.shiftX=0; state.shiftY=0; state.scaleW=0; state.scaleH=0;
+    // Defaults neu setzen
+    blendMode='overlay'; tileFilter='none'; applyBlend(); applyTileFilter();
     updateUI(); if(lastCells) rerenderSameData(); if(overlay) applyTransformOnOverlay(overlay, baseBoundsObj);
-    toast('Justage zurückgesetzt');
+    toast('Justage & Anzeige zurückgesetzt');
   });
 })();
 
 /* ======== Auto-Render ======== */
 window.addEventListener('load', function(){ setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150); });
-
 </script>
 </body>
 </html>
