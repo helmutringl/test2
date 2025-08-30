@@ -11,13 +11,12 @@
   html,body,#map{height:100%;margin:0}
   #map{background:#eef2f7}
 
-  /* ► Overlay: Schwarze Kartenteile sollen durchscheinen */
-  /*    multiply sorgt dafür, dass schwarzer Untergrund sichtbar bleibt */
+  /* Overlay: Schwarz der Basiskarte soll durchscheinen */
   .leaflet-overlay-pane img.leaflet-image-layer{
     mix-blend-mode:multiply;
   }
 
-  /* Drawer (Einstellungs-Panel) */
+  /* Drawer */
   #drawer{
     position:fixed; z-index:5000;
     top:calc(env(safe-area-inset-top,0) + 60px);
@@ -129,6 +128,7 @@
         <span id="ovv">85%</span></label>
       <label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label>
       <button class="kb" id="dlPng">PNG speichern</button>
+      <button class="kb" id="resetTuning" title="Alle lokalen Justagen & Tile-Skalen zurücksetzen">Justage zurücksetzen</button>
     </div>
 
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
@@ -164,7 +164,7 @@
     </div>
 
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live)</span></div>
+    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(wirkt jetzt immer)</span></div>
     <div class="row">
       <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="200"> <span id="tileXVal">200%</span></label>
       <code id="tileXpx">– px</code>
@@ -222,26 +222,22 @@ function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg
 var map = L.map('map', { zoomControl:false }); // Zoom-Buttons aus
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
-/* ======== Leaflet-Controls: Links oben (2 Buttons) ======== */
+/* ======== Leaflet-Controls ======== */
 var LeftControl = L.Control.extend({
   options:{ position:'topleft' },
   onAdd:function(){
     var container = L.DomUtil.create('div','leaflet-control custom');
     var btnLoc = L.DomUtil.create('button','btn',container); btnLoc.id='loc'; btnLoc.textContent='📍 Meine Position';
     var btnReset = L.DomUtil.create('button','btn',container); btnReset.id='reset'; btnReset.textContent='↺ Ansicht/Reset';
-    L.DomEvent.disableClickPropagation(container);
-    return container;
+    L.DomEvent.disableClickPropagation(container); return container;
   }
 });
 map.addControl(new LeftControl());
-
-/* ======== Leaflet-Controls: Rechts oben (Zahnrad) ======== */
 var GearControl = L.Control.extend({
   options:{ position:'topright' },
   onAdd:function(){
     var btn = L.DomUtil.create('button','gear-btn leaflet-control custom'); btn.id='fab'; btn.title='Einstellungen'; btn.textContent='⚙️';
-    L.DomEvent.disableClickPropagation(btn);
-    return btn;
+    L.DomEvent.disableClickPropagation(btn); return btn;
   }
 });
 map.addControl(new GearControl());
@@ -299,8 +295,11 @@ legendCtrl.onAdd=function(map){ var div=L.DomUtil.create('div','leaflet-control 
 function updateLegend(vmin,vmax){ var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
   for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
     for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
-  ctx.putImageData(img,0,0); var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
-  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm'; if(vmaxEl) vminEl && (vmaxEl.textContent=vmax.toFixed(1)+' mm'); }
+  ctx.putImageData(img,0,0);
+  var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
+  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm';
+  if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1)+' mm';
+}
 
 /* ======== Stats ======== */
 function quantile(sorted,q){ if(!sorted.length) return NaN; var pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
@@ -396,10 +395,12 @@ function persist(){
   localStorage.setItem('ovScaleH', String(state.scaleH));
   localStorage.setItem('ovTileScaleX', String(state.tileScaleX));
   localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
-  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
+  updateUI();
+  applyTransformOnOverlay(overlay, baseBoundsObj);
 }
 
 /* ======== Renderer ======== */
+/* WICHTIG: Tile-Scale wirkt jetzt IMMER (auch bei cw/ch > 1) */
 function renderToCanvas(cells,bounds){
   var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
   var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
@@ -414,31 +415,42 @@ function renderToCanvas(cells,bounds){
   PALETTE=buildPalette(currentPalette,256); updateLegend(vmin,vmax);
 
   var stepPx=estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,PX_W,PX_H); lastStepPx=stepPx;
-  var halfDxPx=Math.max(0.5,0.5*stepPx.dx*state.tileScaleX), halfDyPx=Math.max(0.5,0.5*stepPx.dy*state.tileScaleY);
-
   var done=0;
+
   for (var c=0;c<cells.length;c++){
-    var cell=cells[c], cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
-    var px0,px1,py0,py1;
-    if(cw_px>1 && ch_px>1){
-      px0=Math.max(0,Math.floor((cell.minx-bounds.west)/lonPerPx));
-      px1=Math.min(PX_W-1,Math.ceil((cell.maxx-bounds.west)/lonPerPx));
-      py0=Math.max(0,Math.floor((bounds.north-cell.maxy)/latPerPx));
-      py1=Math.min(PX_H-1,Math.ceil((bounds.north-cell.miny)/latPerPx));
-    } else {
-      var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
-      var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
-      px0=Math.max(0,Math.floor(cx_px-halfDxPx)); px1=Math.min(PX_W-1,Math.ceil(cx_px+halfDxPx));
-      py0=Math.max(0,Math.floor(cy_px-halfDyPx)); py1=Math.min(PX_H-1,Math.ceil(cy_px+halfDyPx));
-    }
+    var cell=cells[c];
+    var cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
+
+    // Zellzentrum in Pixeln
+    var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
+    var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
+
+    // Basis-Halbdimensionen: echte Zellgröße wenn >1px, sonst heuristische Schrittgröße
+    var halfW = 0.5 * (cw_px>1 ? cw_px : stepPx.dx);
+    var halfH = 0.5 * (ch_px>1 ? ch_px : stepPx.dy);
+
+    // Tile-Scale IMMER anwenden
+    halfW = Math.max(0.5, halfW * state.tileScaleX);
+    halfH = Math.max(0.5, halfH * state.tileScaleY);
+
+    var px0=Math.max(0,Math.floor(cx_px-halfW));
+    var px1=Math.min(PX_W-1,Math.ceil (cx_px+halfW));
+    var py0=Math.max(0,Math.floor(cy_px-halfH));
+    var py1=Math.min(PX_H-1,Math.ceil (cy_px+halfH));
     if(px1<px0 || py1<py0) continue;
 
     var col=colorFor(cell.v,vmin,vmax), r=col[0], g=col[1], b=col[2], a=255;
-    for (var y=py0; y<=py1; y++){ var idx=(y*PX_W+px0)*4; for (var x=px0; x<=px1; x++){ data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4; } }
+    for (var y=py0; y<=py1; y++){
+      var idx=(y*PX_W+px0)*4;
+      for (var x=px0; x<=px1; x++){
+        data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4;
+      }
+    }
     done++; if((done%1500)===0) progress(done/cells.length);
   }
-  var ctx2=cvs.getContext('2d');
-  ctx2.putImageData(img,0,0); progress(1); return { canvas:cvs, width:PX_W, height:PX_H };
+
+  var ctx2=cvs.getContext('2d'); ctx2.putImageData(img,0,0); progress(1);
+  return { canvas:cvs, width:PX_W, height:PX_H };
 }
 
 /* ======== Overlay ======== */
@@ -459,7 +471,6 @@ function placeOverlayFromCanvas(rr){
   if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
   overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
   overlay.on('load', function(){
-    /* ► Sicherheitshalber auch hier setzen */
     if(overlay && overlay._image){ overlay._image.style.mixBlendMode='multiply'; }
     applyTransformOnOverlay(overlay, baseBoundsObj);
     updateUI();
@@ -474,7 +485,7 @@ function renderOverlay(opts){
     var start=startEl.value, end=endEl.value;
     var partsStr=document.getElementById('bbox').value.trim().split(',');
     if(partsStr.length!==4){ alert("BBOX-Format: south,west,north,east"); return; }
-    var parts=[]; for (var i=0;i<4;i++){ var p=parseFloat(partsStr[i]); if(!isFinite(p)){ alert("BBOX ungültig"); return; } parts.push(p); }
+    var parts=[]; for(var i=0;i<4;i++){ var p=parseFloat(partsStr[i]); if(!isFinite(p)){ alert("BBOX ungültig"); return; } parts.push(p); }
     var south=parts[0], west=parts[1], north=parts[2], east=parts[3];
     baseBoundsObj={south:south, west:west, north:north, east:east}; baseBounds=L.latLngBounds([south,west],[north,east]);
 
@@ -496,7 +507,7 @@ function renderOverlay(opts){
   } catch(e){ console.error(e); alert("Fehler beim Laden/Rendern: "+(e && e.message? e.message: e)); }
 }
 
-/* ======== Buttons (im Drawer + Leaflet-Controls) ======== */
+/* ======== Buttons (Drawer + Leaflet) & Slider ======== */
 document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
 document.getElementById('dlPng').addEventListener('click', function(){
   if(!lastCanvas){ toast("Bitte zuerst rendern"); return; }
@@ -511,7 +522,6 @@ document.getElementById('showBounds').addEventListener('change', function(){ var
 
 /* Links oben: GPS / Reset */
 document.getElementById('reset').addEventListener('click', function(){ if(baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
-/* GPS */
 var watchId=null, gpsMarker=null, accCircle=null, firstFix=true;
 function startWatch(){
   if(watchId!==null) return;
@@ -543,7 +553,7 @@ document.getElementById('loc').addEventListener('click', function(){
          this.textContent="📍 Meine Position"; toast("GPS aus"); }
 });
 
-/* ======== Presets ======== */
+/* Presets */
 var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
 function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
   document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
@@ -551,7 +561,7 @@ applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value
 (function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
   document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
 
-/* ======== Punkt-Zeitreihe (Klick) ======== */
+/* Punkt-Zeitreihe (Klick) */
 var chartEl=document.getElementById('chartPanel'), chartTitle=document.getElementById('chartTitle');
 var chartSub=document.getElementById('chartSub'), chartMeta=document.getElementById('chartMeta');
 var closeChartBtn=document.getElementById('closeChart'), chartCanvas=document.getElementById('chartCanvas');
@@ -604,8 +614,42 @@ map.on('click', function(e){
   .catch(function(err){ console.error(err); alert("Zeitreihe fehlgeschlagen: "+(err && err.message? err.message: err)); });
 });
 
+/* ======== Live-Listener für Tile & Justage ======== */
+(function(){
+  let debounce;
+  function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); }, 120); }
+
+  // Tile-Skalen
+  document.getElementById('tileX').addEventListener('input', function(){
+    state.tileScaleX = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleX', String(state.tileScaleX)); rerenderDebounced();
+  });
+  document.getElementById('tileY').addEventListener('input', function(){
+    state.tileScaleY = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleY', String(state.tileScaleY)); rerenderDebounced();
+  });
+
+  // Justage-Buttons (Bounds-Transform → kein Neurender nötig)
+  document.getElementById('left').addEventListener('click',  ()=>{ state.shiftX -= 1; persist(); });
+  document.getElementById('right').addEventListener('click', ()=>{ state.shiftX += 1; persist(); });
+  document.getElementById('up').addEventListener('click',    ()=>{ state.shiftY += 1; persist(); });
+  document.getElementById('down').addEventListener('click',  ()=>{ state.shiftY -= 1; persist(); });
+
+  document.getElementById('wMinus').addEventListener('click', ()=>{ state.scaleW -= 0.5; persist(); });
+  document.getElementById('wPlus').addEventListener('click',  ()=>{ state.scaleW += 0.5; persist(); });
+  document.getElementById('hMinus').addEventListener('click', ()=>{ state.scaleH -= 0.5; persist(); });
+  document.getElementById('hPlus').addEventListener('click',  ()=>{ state.scaleH += 0.5; persist(); });
+
+  // Reset aller lokalen Justagen
+  document.getElementById('resetTuning').addEventListener('click', ()=>{
+    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH'].forEach(localStorage.removeItem.bind(localStorage));
+    state.tileScaleX=2; state.tileScaleY=2; state.shiftX=0; state.shiftY=0; state.scaleW=0; state.scaleH=0;
+    updateUI(); if(lastCells) rerenderSameData(); if(overlay) applyTransformOnOverlay(overlay, baseBoundsObj);
+    toast('Justage zurückgesetzt');
+  });
+})();
+
 /* ======== Auto-Render ======== */
 window.addEventListener('load', function(){ setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150); });
+
 </script>
 </body>
 </html>
