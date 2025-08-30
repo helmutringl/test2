@@ -11,16 +11,11 @@
   html,body,#map{height:100%;margin:0}
   #map{background:#eef2f7; isolation:isolate;} /* Isolation = Blend funktioniert zuverlässig in Chrome */
 
-  /* Basiskarte: optionaler „Signalboost“ per CSS-Variable */
-  .leaflet-tile-pane{
-    filter: var(--tileFilter, none);
-    will-change: filter;
-  }
+  /* Basiskarte: Default ohne Filter (JS setzt Filter später direkt auf das tilePane) */
+  .leaflet-tile-pane{ filter:none; }
 
-  /* Overlay: Blend per CSS-Variable – default overlay => Schwarz & Weiß bleiben sichtbar */
-  .leaflet-overlay-pane img.leaflet-image-layer{
-    mix-blend-mode: var(--blend, overlay);
-  }
+  /* Overlay: Default-Blend; JS setzt zusätzlich robust per Pane & <img> */
+  .leaflet-overlay-pane img.leaflet-image-layer{ mix-blend-mode:overlay; }
 
   /* Drawer (Einstellungs-Panel) */
   #drawer{
@@ -496,28 +491,37 @@ function applyTransformOnOverlay(ov,base){
   if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
 }
 
-/* ======== Blend-Mode & Tile-Filter ======== */
+/* ======== Blend-Mode & Tile-Filter (ROBUST: direkt auf Leaflet-Panes) ======== */
 var blendMode = localStorage.getItem('ovBlendMode') || 'overlay';
+var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
+
 function applyBlend(){
-  document.documentElement.style.setProperty('--blend', blendMode);
+  // Pane-weit (sicherer als nur am <img>)
+  if (map && map.getPanes && map.getPanes().overlayPane){
+    map.getPanes().overlayPane.style.mixBlendMode = blendMode;
+  }
+  // zusätzlich direkt am Bild (falls Leaflet Bild tauscht)
   if (overlay && overlay._image){
     overlay._image.style.mixBlendMode = blendMode;
+    void overlay._image.offsetHeight; // Safari/iOS: Reflow
+  }
+}
+function applyTileFilter(){
+  if (map && map.getPanes && map.getPanes().tilePane){
+    map.getPanes().tilePane.style.filter = tileFilter;
+    map.getPanes().tilePane.style.willChange = tileFilter==='none' ? '' : 'filter';
   }
 }
 function bindBlendRef(){
-  var blendSel = document.getElementById('blendMode');
-  if (blendSel){
-    blendSel.value = blendMode;
-    blendSel.addEventListener('change', function(){
+  var sel = document.getElementById('blendMode');
+  if (sel){
+    sel.value = blendMode;
+    sel.addEventListener('change', function(){
       blendMode = this.value;
       localStorage.setItem('ovBlendMode', blendMode);
       applyBlend();
     });
   }
-}
-var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
-function applyTileFilter(){
-  document.documentElement.style.setProperty('--tileFilter', tileFilter);
 }
 function bindTileFilterRef(){
   var sel = document.getElementById('tileFilterSel');
@@ -538,7 +542,7 @@ function placeOverlayFromCanvas(rr){
   if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
   overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
   overlay.on('load', function(){
-    applyBlend(); /* Blend anwenden (auch bei 100% Opacity sichtbar) */
+    applyBlend(); /* Pane + Bild */
     applyTransformOnOverlay(overlay, baseBoundsObj);
     updateUI();
   });
@@ -683,8 +687,9 @@ map.on('click', function(e){
 
 /* ======== Live-Listener für Tile & Justage ======== */
 (function(){
-  bindBlendRef(); applyBlend();
-  bindTileFilterRef(); applyTileFilter();
+  // Blend & Tile-Filter initial anwenden + UI binden
+  applyTileFilter(); applyBlend();
+  bindBlendRef(); bindTileFilterRef();
 
   let debounce;
   function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); }, 120); }
@@ -712,8 +717,8 @@ map.on('click', function(e){
   document.getElementById('resetTuning').addEventListener('click', ()=>{
     ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH','ovBlendMode','ovTileFilter'].forEach(localStorage.removeItem.bind(localStorage));
     state.tileScaleX=2; state.tileScaleY=2; state.shiftX=0; state.shiftY=0; state.scaleW=0; state.scaleH=0;
-    // Defaults neu setzen
-    blendMode='overlay'; tileFilter='none'; applyBlend(); applyTileFilter();
+    blendMode='overlay'; tileFilter='none';
+    applyBlend(); applyTileFilter();
     updateUI(); if(lastCells) rerenderSameData(); if(overlay) applyTransformOnOverlay(overlay, baseBoundsObj);
     toast('Justage & Anzeige zurückgesetzt');
   });
