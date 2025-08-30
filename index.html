@@ -3,26 +3,22 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-<title>14-Tage-Niederschlag • NÖ & STMK (Client)</title>
+<title>RR & SPEI • NÖ & STMK (Client)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
 <style>
   *{box-sizing:border-box}
   html,body,#map{height:100%;margin:0}
-  #map{background:#eef2f7; isolation:isolate;} /* Isolation = Blend funktioniert zuverlässig in Chrome */
+  #map{background:#eef2f7; isolation:isolate;}
 
-  /* Basiskarte: Default ohne Filter (JS setzt Filter später direkt auf das tilePane) */
   .leaflet-tile-pane{ filter:none; }
-
-  /* Overlay: Default-Blend; JS setzt zusätzlich robust per Pane & <img> */
   .leaflet-overlay-pane img.leaflet-image-layer{ mix-blend-mode:overlay; }
 
-  /* Drawer (Einstellungs-Panel) */
   #drawer{
     position:fixed; z-index:5000;
     top:calc(env(safe-area-inset-top,0) + 60px);
     right:calc(env(safe-area-inset-right,0) + 12px);
-    width:min(380px,94vw); max-height:72vh; overflow:auto;
+    width:min(420px,94vw); max-height:72vh; overflow:auto;
     background:#fff; border:1px solid #e5e5e5; border-radius:12px;
     box-shadow:0 8px 24px rgba(0,0,0,.18);
     transform:translateX(110%); transition:transform .22s ease-out;
@@ -36,18 +32,16 @@
   label{font-size:12px}
   .hint{font-size:12px; opacity:.7}
   input[type="date"]{padding:4px 6px; border:1px solid #ddd; border-radius:6px; font:14px system-ui}
-  input[type="range"], select{width:160px}
+  input[type="range"], select{width:180px}
   .progress{height:6px; background:#eee; border-radius:999px; overflow:hidden; width:100%}
   .bar{height:100%; width:0%; background:#4f46e5; transition:width .15s}
 
-  /* Toast */
   #toast{
     position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:5000;
     background:#111; color:#fff; padding:8px 12px; border-radius:8px; opacity:.92; display:none;
     font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:13px;
   }
 
-  /* Chart-Panel */
   #chartPanel{
     position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
     width:min(680px,96vw); background:#fff; border:1px solid #e5e5e5; border-radius:12px;
@@ -60,7 +54,6 @@
   #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
   #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
 
-  /* Legende */
   .leaflet-control.legend {
     background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5;
     box-shadow:0 2px 8px rgba(0,0,0,.12); font-family:system-ui,-apple-system,Segoe UI,Roboto;
@@ -68,7 +61,6 @@
   #legendCanvas{ display:block; width:240px; height:12px; image-rendering:pixelated; }
   .legend-row{ display:flex; justify-content:space-between; margin-top:4px; font-size:12px; }
 
-  /* Custom Leaflet Controls */
   .leaflet-control.custom{
     background:#fff; border:1px solid #e5e5e5; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.12);
     font-family:system-ui,-apple-system,Segoe UI,Roboto; overflow:hidden;
@@ -92,9 +84,20 @@
     <div class="row" style="justify-content:space-between; width:100%">
       <div>
         <div><strong>Overlay aus API rendern (Client)</strong></div>
-        <div class="hint">SPARTACUS v2 RR • GeoSphere Dataset-API</div>
+        <div class="hint">SPARTACUS v2 (RR) &amp; WINFORE v2 (SPEI30)</div>
       </div>
       <button class="kb" id="renderBtn">Laden &amp; Rendern</button>
+    </div>
+
+    <!-- Dataset-Umschalter -->
+    <div class="row">
+      <label>Datensatz:&nbsp;
+        <select id="datasetSel" title="Niederschlag (14T-Summe) oder SPEI30 (Bodenfeuchte-Index)">
+          <option value="precip">Niederschlag (RR) • 14-Tage-Summe</option>
+          <option value="spei30">„Bodenfeuchte“ (SPEI30) • letzter Tag</option>
+        </select>
+      </label>
+      <span class="hint">SPEI: &lt;0 trocken, &gt;0 feucht</span>
     </div>
 
     <!-- Presets -->
@@ -215,7 +218,7 @@
   <div id="chartPanel" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
     <div id="chartHead">
       <div>
-        <div id="chartTitle"><strong>14-Tage-Summe (RR) am Punkt</strong></div>
+        <div id="chartTitle"><strong>Werte am Punkt</strong></div>
         <div id="chartSub" class="hint"></div>
       </div>
       <button id="closeChart">Schließen</button>
@@ -230,24 +233,42 @@
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script>
-/* ======== Konfig ======== */
-var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
-var PARAM = "RR";
-var CANVAS_W = 1536;
-
-// Presets
-var PRESETS = {
-  noe: { name:"Niederösterreich", bbox:[47.419564822,14.450844322,49.024548178,17.075640678], center:[48.30,15.75] },
-  stmk:{ name:"Steiermark",       bbox:[46.35,13.55,47.75,16.51],                    center:[47.25,15.25] }
+/* ======== Datensätze ======== */
+const DATASETS = {
+  precip: {
+    key: 'precip',
+    url: 'https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km',
+    param: 'RR',
+    name: 'Niederschlag (14-Tage-Summe)',
+    legend: 'RR (mm)',
+    unit: 'mm',
+    overlayAgg: 'sum',   // Summe über Zeitraum
+    chartType: 'bar',    // Balken
+    chartLabel: 'RR (mm/Tag)'
+  },
+  spei30: {
+    key: 'spei30',
+    url: 'https://dataset.api.hub.geosphere.at/v1/grid/historical/winfore-v2-1d-1km',
+    param: 'SPEI30',
+    name: '„Bodenfeuchte“ (SPEI30)',
+    legend: 'SPEI (–)',
+    unit: 'SPEI',
+    overlayAgg: 'last',  // letzter Tag im Zeitraum
+    chartType: 'line',   // Linienchart
+    chartLabel: 'SPEI30 (täglich)',
+    yMin: -3, yMax: 3
+  }
 };
+let currentKey = localStorage.getItem('ovDataset') || 'precip';
+let CUR = DATASETS[currentKey];
 
 /* ======== Map ======== */
 function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg; el.style.display='block';
   clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2200); }
-var map = L.map('map', { zoomControl:false }); // Zoom-Buttons aus
+var map = L.map('map', { zoomControl:false });
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
 
-/* ======== Leaflet-Controls ======== */
+/* ======== Custom Controls ======== */
 var LeftControl = L.Control.extend({
   options:{ position:'topleft' },
   onAdd:function(){
@@ -267,10 +288,22 @@ var GearControl = L.Control.extend({
 });
 map.addControl(new GearControl());
 
-/* ======== Drawer Toggle ======== */
+/* ======== Drawer ======== */
 var fab=document.getElementById('fab'), drawer=document.getElementById('drawer');
 function toggleDrawer(){ var open=!drawer.classList.contains('open'); drawer.classList.toggle('open',open); drawer.setAttribute('aria-hidden', String(!open)); }
 fab.addEventListener('click', toggleDrawer);
+
+/* ======== Presets ======== */
+const PRESETS = {
+  noe: { name:"Niederösterreich", bbox:[47.419564822,14.450844322,49.024548178,17.075640678], center:[48.30,15.75] },
+  stmk:{ name:"Steiermark",       bbox:[46.35,13.55,47.75,16.51],                    center:[47.25,15.25] }
+};
+var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
+function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
+  document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
+applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value); });
+(function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
+  document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
 
 /* ======== Datum: letzte 14 Tage ======== */
 var startEl=document.getElementById('start'), endEl=document.getElementById('end');
@@ -280,19 +313,18 @@ var startEl=document.getElementById('start'), endEl=document.getElementById('end
   startEl.value=fmt(start); endEl.value=fmt(end);
 })();
 
-/* ======== States ======== */
+/* ======== Overlay/Legend/Palette/Progress ======== */
 var overlay=null, rect=null, baseBounds=null, baseBoundsObj=null;
 var lastCanvas=null, lastCells=null, lastStepPx=null, clickMarker=null;
 
-/* ======== Progress ======== */
 var bar=document.getElementById('bar'), pct=document.getElementById('pct');
 function progress(frac){ var p=Math.max(0,Math.min(1,frac||0)); bar.style.width=(Math.round(p*100))+'%'; pct.textContent=(Math.round(p*100))+'%'; }
 
-/* ======== Paletten ======== */
 var paletteSel=document.getElementById('palette');
 var currentPalette=localStorage.getItem('ovPalette')||'spectral';
 paletteSel.value=currentPalette;
 paletteSel.addEventListener('change', function(){ currentPalette=this.value; localStorage.setItem('ovPalette', currentPalette); if(lastCells){ rerenderSameData(); } });
+
 function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
 function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t))]; }
 function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); var c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)), r=0,g=0,b=0;
@@ -308,22 +340,25 @@ function getStops(name){
   return getStops('spectral');
 }
 var STOPS=getStops(currentPalette), PALETTE=null;
-function colorFromStops(t){ t=Math.max(0,Math.min(1,t)); var i=0; while(i<STOPS.length-1 && t>STOPS[i+1].t) i++; var a=STOPS[i], b=STOPS[i+1], local=(t-a.t)/(b.t-a.t+1e-12);
+function colorFromStops(t){ t=Math.max(0,Math.min(1,t)); var i=0; while(i<STOPS.length-1 && t>STOPS[i+1].t) i++; var a=STOPS[i], b=STOPS[i+1], local=(t-a.t)/(b-a.t+1e-12);
   return lerpColor(a.c,b.c,local); }
 function buildPalette(name,n){ STOPS=getStops(name); var arr=new Array(n); for(var i=0;i<n;i++){ var t=i/(n-1); arr[i]=colorFromStops(t);} return arr; }
 function colorFor(v,vmin,vmax){ if(!isFinite(v)) return [0,0,0,0]; var t=(v-vmin)/(vmax-vmin+1e-12); t=Math.max(0,Math.min(1,t));
   var c=PALETTE && PALETTE.length ? PALETTE[Math.round(t*(PALETTE.length-1))] : colorFromStops(t); return [c[0],c[1],c[2],255]; }
+
 var legendCtrl=L.control({position:'bottomright'});
 legendCtrl.onAdd=function(map){ var div=L.DomUtil.create('div','leaflet-control legend');
-  div.innerHTML='<div style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>';
+  div.innerHTML='<div id="legendTitle" style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>';
   L.DomEvent.disableClickPropagation(div); return div; }; legendCtrl.addTo(map);
-function updateLegend(vmin,vmax){ var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
+function setLegendTitle(txt){ var t=document.getElementById('legendTitle'); if(t) t.textContent=txt; }
+function updateLegend(vmin,vmax){
+  var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
   for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
     for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
   ctx.putImageData(img,0,0);
   var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
-  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm';
-  if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1)+' mm';
+  if(vminEl) vminEl.textContent=vmin.toFixed(1);
+  if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1);
 }
 
 /* ======== Stats ======== */
@@ -334,24 +369,22 @@ function robustRange(vals){ var a=[]; for(var i=0;i<vals.length;i++) if(isFinite
   if(v98<=v2) v98=v2+1e-6; return {vmin:v2, vmax:v98}; }
 
 /* ======== API ======== */
-function loadFeatureCollection(start,end,bbox){
-  var params=new URLSearchParams({ parameters:PARAM, start:start, end:end, bbox:bbox.join(',') });
-  return fetch(DATASET_URL+"?"+params.toString(), { headers:{ "Accept":"application/json" } })
+function loadFeatureCollection(ds,start,end,bbox){
+  var params=new URLSearchParams({ parameters:ds.param, start:start, end:end, bbox:bbox.join(',') });
+  return fetch(ds.url+"?"+params.toString(), { headers:{ "Accept":"application/json" } })
     .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t); }); return r.json(); })
     .then(function(fc){ if(!fc || fc.type!=="FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten."); return fc; });
 }
 function extractValues(props,nt){
-  var prefer=[PARAM,String(PARAM).toLowerCase(),"RRsum","rr_sum","value","values"];
+  var prefer=[CUR.param, String(CUR.param).toLowerCase(), "RR", "rr", "SPEI30","spei30", "value","values"];
   for(var i=0;i<prefer.length;i++){ var v=props[prefer[i]];
     if(Array.isArray(v) && v.length>0){ var out=[]; for(var j=0;j<v.length;j++){ var x=v[j]; if(typeof x==='number' && isFinite(x)) out.push(Number(x)); } if(out.length>0) return out; } }
-  var keys=Object.keys(props);
-  for(var k=0;k<keys.length;k++){ var v2=props[keys[k]];
-    if(Array.isArray(v2) && (nt? v2.length===nt : v2.length>0)){ var out2=[]; for(var j2=0;j2<v2.length;j2++){ var y=v2[j2]; if(typeof y==='number' && isFinite(y)) out2.push(Number(y)); } if(out2.length>0) return out2; } }
+  // Fallback: erstes Zahlenarray irgendwo
   var found=null; (function scan(o){ if(found) return;
-    if(Array.isArray(o)){ if(o.length>0){ var num=false; for(var q=0;q<o.length;q++){ if(typeof o[q]==='number' && isFinite(o[q])){ num=true; break; } }
-      if(num){ found=o.map(function(z){ return Number(z); }); return; } }
-      for(var q2=0;q2<o.length;q2++) scan(o[q2]);
-    } else if(o && typeof o==='object'){ var ks=Object.keys(o); for(var m=0;m<ks.length;m++) scan(o[ks[m]]); } })(props);
+    if(Array.isArray(o)){ var ok=o.some(z=>typeof z==='number'&&isFinite(z)); if(ok){ found=o.map(Number); return; }
+                          for(var q=0;q<o.length;q++) scan(o[q]); }
+    else if(o && typeof o==='object'){ for(var k in o) scan(o[k]); }
+  })(props);
   return found;
 }
 function bboxFromGeom(geom){
@@ -363,7 +396,7 @@ function bboxFromGeom(geom){
   return [minx,miny,maxx,maxy];
 }
 
-/* ======== Rastergröße schätzen ======== */
+/* ======== Raster-Größe ======== */
 function medianFrom(arr){ var a=[]; for(var i=0;i<arr.length;i++) if(isFinite(arr[i])) a.push(arr[i]);
   if(!a.length) return NaN; a.sort(function(x,y){return x-y;}); var mid=0.5*(a.length-1), lo=Math.floor(mid), hi=Math.ceil(mid); return a[lo]+(mid-lo)*(a[hi]-a[lo]); }
 function estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,pxW,pxH){
@@ -424,8 +457,59 @@ function persist(){
   applyTransformOnOverlay(overlay, baseBoundsObj);
 }
 
+/* ======== Blend & Tile-Filter (robust) ======== */
+var blendMode = localStorage.getItem('ovBlendMode') || 'overlay';
+var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
+function applyBlend(){
+  if (map && map.getPanes && map.getPanes().overlayPane){
+    map.getPanes().overlayPane.style.mixBlendMode = blendMode;
+  }
+  if (overlay && overlay._image){
+    overlay._image.style.mixBlendMode = blendMode;
+    void overlay._image.offsetHeight;
+  }
+}
+function applyTileFilter(){
+  if (map && map.getPanes && map.getPanes().tilePane){
+    map.getPanes().tilePane.style.filter = tileFilter;
+    map.getPanes().tilePane.style.willChange = tileFilter==='none' ? '' : 'filter';
+  }
+}
+function bindBlendRef(){
+  var sel = document.getElementById('blendMode');
+  if (sel){
+    sel.value = blendMode;
+    sel.addEventListener('change', function(){
+      blendMode = this.value;
+      localStorage.setItem('ovBlendMode', blendMode);
+      applyBlend();
+    });
+  }
+}
+function bindTileFilterRef(){
+  var sel = document.getElementById('tileFilterSel');
+  if (sel){
+    sel.value = tileFilter;
+    sel.addEventListener('change', function(){
+      tileFilter = this.value;
+      localStorage.setItem('ovTileFilter', tileFilter);
+      applyTileFilter();
+    });
+  }
+}
+
 /* ======== Renderer ======== */
-/* WICHTIG: Tile-Scale wirkt IMMER (auch bei cw/ch > 1) */
+const CANVAS_W = 1536;
+function aggregateCell(values){
+  if(!Array.isArray(values) || !values.length) return NaN;
+  if(CUR.overlayAgg==='sum'){
+    var s=0; for(var i=0;i<values.length;i++){ var v=values[i]; if(isFinite(v)) s+=v; } return s;
+  } else if(CUR.overlayAgg==='last'){
+    for(var j=values.length-1;j>=0;j--){ var vv=values[j]; if(isFinite(vv)) return vv; }
+    return values[values.length-1];
+  }
+  return values[0];
+}
 function renderToCanvas(cells,bounds){
   var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
   var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
@@ -437,7 +521,9 @@ function renderToCanvas(cells,bounds){
   var vals=new Array(cells.length); for(var i=0;i<cells.length;i++) vals[i]=cells[i].v;
   var rr=robustRange(vals), vmin=rr.vmin, vmax=rr.vmax;
 
-  PALETTE=buildPalette(currentPalette,256); updateLegend(vmin,vmax);
+  PALETTE=buildPalette(currentPalette,256);
+  setLegendTitle(CUR.legend);
+  updateLegend(vmin,vmax);
 
   var stepPx=estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,PX_W,PX_H); lastStepPx=stepPx;
   var done=0;
@@ -445,16 +531,11 @@ function renderToCanvas(cells,bounds){
   for (var c=0;c<cells.length;c++){
     var cell=cells[c];
     var cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
-
-    // Zellzentrum in Pixeln
     var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
     var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
 
-    // Basis-Halbdimensionen: echte Zellgröße wenn >1px, sonst heuristische Schrittgröße
     var halfW = 0.5 * (cw_px>1 ? cw_px : stepPx.dx);
     var halfH = 0.5 * (ch_px>1 ? ch_px : stepPx.dy);
-
-    // Tile-Scale IMMER anwenden
     halfW = Math.max(0.5, halfW * state.tileScaleX);
     halfH = Math.max(0.5, halfH * state.tileScaleY);
 
@@ -490,59 +571,13 @@ function applyTransformOnOverlay(ov,base){
   var adj=L.latLngBounds([south,west],[north,east]); ov.setBounds(adj);
   if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
 }
-
-/* ======== Blend-Mode & Tile-Filter (ROBUST: direkt auf Leaflet-Panes) ======== */
-var blendMode = localStorage.getItem('ovBlendMode') || 'overlay';
-var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
-
-function applyBlend(){
-  // Pane-weit (sicherer als nur am <img>)
-  if (map && map.getPanes && map.getPanes().overlayPane){
-    map.getPanes().overlayPane.style.mixBlendMode = blendMode;
-  }
-  // zusätzlich direkt am Bild (falls Leaflet Bild tauscht)
-  if (overlay && overlay._image){
-    overlay._image.style.mixBlendMode = blendMode;
-    void overlay._image.offsetHeight; // Safari/iOS: Reflow
-  }
-}
-function applyTileFilter(){
-  if (map && map.getPanes && map.getPanes().tilePane){
-    map.getPanes().tilePane.style.filter = tileFilter;
-    map.getPanes().tilePane.style.willChange = tileFilter==='none' ? '' : 'filter';
-  }
-}
-function bindBlendRef(){
-  var sel = document.getElementById('blendMode');
-  if (sel){
-    sel.value = blendMode;
-    sel.addEventListener('change', function(){
-      blendMode = this.value;
-      localStorage.setItem('ovBlendMode', blendMode);
-      applyBlend();
-    });
-  }
-}
-function bindTileFilterRef(){
-  var sel = document.getElementById('tileFilterSel');
-  if (sel){
-    sel.value = tileFilter;
-    sel.addEventListener('change', function(){
-      tileFilter = this.value;
-      localStorage.setItem('ovTileFilter', tileFilter);
-      applyTileFilter();
-    });
-  }
-}
-
-/* ======== Overlay-Aufbau ======== */
 function placeOverlayFromCanvas(rr){
   lastCanvas=rr.canvas;
   var url=rr.canvas.toDataURL("image/png");
   if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
   overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
   overlay.on('load', function(){
-    applyBlend(); /* Pane + Bild */
+    applyBlend();
     applyTransformOnOverlay(overlay, baseBoundsObj);
     updateUI();
   });
@@ -560,30 +595,30 @@ function renderOverlay(opts){
     var south=parts[0], west=parts[1], north=parts[2], east=parts[3];
     baseBoundsObj={south:south, west:west, north:north, east:east}; baseBounds=L.latLngBounds([south,west],[north,east]);
 
-    loadFeatureCollection(start,end,parts).then(function(fc){
+    loadFeatureCollection(CUR,start,end,parts).then(function(fc){
       var timestamps=fc.timestamps||[], nt=timestamps.length;
       var feats=fc.features||[], cells=[];
       for (var i=0;i<feats.length;i++){
         var f=feats[i], geom=f && f.geometry; if(!geom) continue;
         var vals=extractValues((f.properties||{}), nt); if(!vals) continue;
-        var sum=0; for (var j=0;j<vals.length;j++){ var vv=vals[j]; if(isFinite(vv)) sum+=vv; }
-        var bb=bboxFromGeom(geom); cells.push({ v:sum, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
+        var agg=aggregateCell(vals);
+        var bb=bboxFromGeom(geom); cells.push({ v:agg, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
         if((i%1500)===0) progress(i/feats.length);
       }
       lastCells=cells.slice(0);
-      if(!opts.silent) toast("Zellen: "+cells.length);
+      if(!opts.silent) toast("Zellen: "+cells.length+" • "+CUR.name);
       var rr=renderToCanvas(cells, baseBoundsObj); placeOverlayFromCanvas(rr);
       if(opts.fit!==false) map.fitBounds(baseBounds.pad(0.1));
     }).catch(function(err){ console.error(err); alert("Fehler beim Laden/Rendern: "+(err && err.message? err.message: err)); });
   } catch(e){ console.error(e); alert("Fehler beim Laden/Rendern: "+(e && e.message? e.message: e)); }
 }
 
-/* ======== Buttons (Drawer + Leaflet) & Slider ======== */
+/* ======== Buttons & Slider ======== */
 document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
 document.getElementById('dlPng').addEventListener('click', function(){
   if(!lastCanvas){ toast("Bitte zuerst rendern"); return; }
   var a=document.createElement('a'), start=startEl.value||'start', end=endEl.value||'end';
-  a.download='rr_sum_'+start+'_bis_'+end+'.png'; a.href=lastCanvas.toDataURL('image/png');
+  a.download=CUR.key+'_overlay_'+start+'_bis_'+end+'.png'; a.href=lastCanvas.toDataURL('image/png');
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 });
 document.getElementById('opacity').addEventListener('input', function(){ if(overlay) overlay.setOpacity(Number(this.value)/100); document.getElementById('ovv').textContent=this.value+'%'; });
@@ -591,7 +626,17 @@ document.getElementById('showBounds').addEventListener('change', function(){ var
   if(checked){ rect=L.rectangle(overlay? overlay._bounds: baseBounds,{color:'red',weight:1}).addTo(map); }
   else { if(rect){ map.removeLayer(rect); rect=null; } }});
 
-/* Links oben: GPS / Reset */
+/* ======== Dataset-Umschalter ======== */
+var dsSel=document.getElementById('datasetSel');
+dsSel.value=currentKey;
+dsSel.addEventListener('change', function(){
+  currentKey=this.value; CUR=DATASETS[currentKey]; localStorage.setItem('ovDataset', currentKey);
+  // Legendentitel sofort umstellen, Renderer bei bestehenden Daten neu zeichnen:
+  setLegendTitle(CUR.legend);
+  if(lastCells) rerenderSameData(); else renderOverlay({fit:true});
+});
+
+/* ======== GPS / Reset ======== */
 document.getElementById('reset').addEventListener('click', function(){ if(baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
 var watchId=null, gpsMarker=null, accCircle=null, firstFix=true;
 function startWatch(){
@@ -603,7 +648,7 @@ function startWatch(){
     accCircle=L.circle([lat,lon],acc,{opacity:0.6,fillOpacity:0.08}).addTo(map);
     if(firstFix){ map.setView([lat,lon], Math.max(map.getZoom(),12)); firstFix=false; }
   }, function(err){
-    if(err.code===err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
+    if(err.code===err.PERMISSION_DENIED) toast("Standort verweigert");
     else toast("GPS-Fehler: "+err.message);
   }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
 }
@@ -612,8 +657,7 @@ function requestOnceThenWatch(){
     navigator.geolocation.getCurrentPosition(function(){ res(); }, function(e){ rej(e); },
       { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
   }).then(function(){ startWatch(); document.getElementById('loc').textContent="📍 GPS aktiv"; toast("GPS aktiv"); })
-   .catch(function(e){ if(e && e.code===e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
-                       else toast("GPS-Fehler: "+(e && e.message? e.message: e)); });
+   .catch(function(e){ toast("GPS: "+(e && e.message? e.message: "keine Freigabe")); });
 }
 document.getElementById('loc').addEventListener('click', function(){
   if(!('geolocation' in navigator)){ toast("Geolocation nicht verfügbar"); return; }
@@ -624,26 +668,19 @@ document.getElementById('loc').addEventListener('click', function(){
          this.textContent="📍 Meine Position"; toast("GPS aus"); }
 });
 
-/* Presets */
-var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
-function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
-  document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
-applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value); });
-(function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
-  document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
-
-/* Punkt-Zeitreihe (Klick) */
+/* ======== Punkt-Zeitreihe ======== */
 var chartEl=document.getElementById('chartPanel'), chartTitle=document.getElementById('chartTitle');
 var chartSub=document.getElementById('chartSub'), chartMeta=document.getElementById('chartMeta');
 var closeChartBtn=document.getElementById('closeChart'), chartCanvas=document.getElementById('chartCanvas');
 var pointChart=null;
 closeChartBtn.addEventListener('click', function(){ if(pointChart){ pointChart.destroy(); pointChart=null; } chartEl.classList.remove('open'); });
+
 function kmToDegLat(km){ return km/111.0; } function kmToDegLon(km,lat){ return km/(111.320*Math.cos(lat*Math.PI/180)); }
 function buildPointBBox(lat,lon){ var halfKm=2.0, dLat=kmToDegLat(halfKm), dLon=kmToDegLon(halfKm,lat); return [lat-dLat, lon-dLon, lat+dLat, lon+dLon]; }
 function dist2Deg(lat1,lon1,lat2,lon2){ var x=(lon2-lon1)*Math.cos((lat1+lat2)*0.5*Math.PI/180), y=(lat2-lat1); return x*x+y*y; }
-function fetchPointTimeseries(lat,lon,start,end){
+function fetchPointTimeseries(ds,lat,lon,start,end){
   var bbox=buildPointBBox(lat,lon);
-  return loadFeatureCollection(start,end,bbox).then(function(fc){
+  return loadFeatureCollection(ds,start,end,bbox).then(function(fc){
     var ts=fc.timestamps||[], feats=fc.features||[]; if(!feats.length) throw new Error("Keine Rasterzelle in der Nähe gefunden.");
     var bestD=Infinity, bestVals=null, bestBB=null;
     for(var i=0;i<feats.length;i++){
@@ -658,22 +695,34 @@ function fetchPointTimeseries(lat,lon,start,end){
 function openChart(lat,lon,timestamps,values){
   var labels=timestamps.map(function(iso){ return iso.slice(0,10); });
   var sum=0, vmin=Infinity, vmax=-Infinity;
-  for(var i=0;i<values.length;i++){ var v=Number(values[i]); if(!isFinite(v)) v=0; sum+=v; if(v<vmin)vmin=v; if(v>vmax)vmax=v; }
+  var data=values.map(function(v){ var n=Number(v); if(!isFinite(n)) n=0; sum+= (CUR.key==='precip'? n:0); if(n<vmin)vmin=n; if(n>vmax)vmax=n; return n; });
+
   if(pointChart){ pointChart.destroy(); pointChart=null; }
+  var type = CUR.chartType;
+  var dataset = { label: CUR.chartLabel, data: data, fill:false, tension:0.25, pointRadius:2, borderWidth:2 };
+  var opts = {
+    responsive:true, animation:{duration:200},
+    scales:{
+      x:{ title:{display:true,text:'Tag'}, ticks:{maxRotation:0,autoSkip:true} },
+      y:{ title:{display:true,text:CUR.unit}, beginAtZero:(CUR.key==='precip'),
+          suggestedMin: (CUR.yMin!=null? CUR.yMin: undefined),
+          suggestedMax: (CUR.yMax!=null? CUR.yMax: undefined) }
+    },
+    plugins:{ legend:{display:false},
+      tooltip:{ callbacks:{ label:function(ctx){ var v=ctx.raw??0; return (type==='bar'? v.toFixed(1)+' '+CUR.unit : v.toFixed(2)+' '+CUR.unit); } } } }
+  };
+
   pointChart=new Chart(chartCanvas.getContext('2d'),{
-    type:'bar', data:{ labels:labels, datasets:[{ label:'RR (mm/Tag)', data:values }] },
-    options:{ responsive:true, animation:{duration:200},
-      scales:{ x:{ title:{display:true,text:'Tag'}, ticks:{maxRotation:0,autoSkip:true} },
-               y:{ title:{display:true,text:'mm'}, beginAtZero:true } },
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:function(ctx){ return (ctx.raw??0).toFixed(1)+' mm'; } } } }
-    }
+    type:type, data:{ labels:labels, datasets:[dataset] }, options:opts
   });
-  chartTitle.innerHTML='<strong>RR (letzte 14 Tage)</strong>';
+
+  chartTitle.innerHTML='<strong>'+CUR.name+' am Punkt</strong>';
   chartSub.textContent='Punkt: '+lat.toFixed(5)+', '+lon.toFixed(5);
+  var extra = (CUR.key==='precip') ? `<span>Summe 14T: <code>${sum.toFixed(1)} ${CUR.unit}</code></span>` : '';
   chartMeta.innerHTML=`<span>Zeitraum: <code>${labels[0]} – ${labels[labels.length-1]}</code></span>
-                       <span>Summe: <code>${sum.toFixed(1)} mm</code></span>
-                       <span>Min: <code>${isFinite(vmin)?vmin.toFixed(1):'–'} mm</code></span>
-                       <span>Max: <code>${isFinite(vmax)?vmax.toFixed(1):'–'} mm</code></span>`;
+                       ${extra}
+                       <span>Min: <code>${isFinite(vmin)?vmin.toFixed(CUR.key==='precip'?1:2):'–'}</code></span>
+                       <span>Max: <code>${isFinite(vmax)?vmax.toFixed(CUR.key==='precip'?1:2):'–'}</code></span>`;
   chartEl.classList.add('open');
 }
 map.on('click', function(e){
@@ -681,20 +730,18 @@ map.on('click', function(e){
   if(clickMarker) map.removeLayer(clickMarker);
   clickMarker=L.circleMarker([lat,lon],{radius:6,color:'#111',fillColor:'#4f46e5',fillOpacity:0.9}).addTo(map);
   toast('Lade Zeitreihe …');
-  fetchPointTimeseries(lat,lon,startEl.value,endEl.value).then(function(res){ openChart(lat,lon,res.timestamps,res.values); })
+  fetchPointTimeseries(CUR,lat,lon,startEl.value,endEl.value).then(function(res){ openChart(lat,lon,res.timestamps,res.values); })
   .catch(function(err){ console.error(err); alert("Zeitreihe fehlgeschlagen: "+(err && err.message? err.message: err)); });
 });
 
 /* ======== Live-Listener für Tile & Justage ======== */
 (function(){
-  // Blend & Tile-Filter initial anwenden + UI binden
   applyTileFilter(); applyBlend();
   bindBlendRef(); bindTileFilterRef();
 
   let debounce;
-  function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); }, 120); }
+  function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); else renderOverlay({fit:false,silent:true}); }, 120); }
 
-  // Tile-Skalen
   document.getElementById('tileX').addEventListener('input', function(){
     state.tileScaleX = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleX', String(state.tileScaleX)); rerenderDebounced();
   });
@@ -702,7 +749,6 @@ map.on('click', function(e){
     state.tileScaleY = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleY', String(state.tileScaleY)); rerenderDebounced();
   });
 
-  // Justage-Buttons (Bounds-Transform → kein Neurender nötig)
   document.getElementById('left').addEventListener('click',  ()=>{ state.shiftX -= 1; persist(); });
   document.getElementById('right').addEventListener('click', ()=>{ state.shiftX += 1; persist(); });
   document.getElementById('up').addEventListener('click',    ()=>{ state.shiftY += 1; persist(); });
@@ -713,19 +759,18 @@ map.on('click', function(e){
   document.getElementById('hMinus').addEventListener('click', ()=>{ state.scaleH -= 0.5; persist(); });
   document.getElementById('hPlus').addEventListener('click',  ()=>{ state.scaleH += 0.5; persist(); });
 
-  // Reset aller lokalen Justagen
   document.getElementById('resetTuning').addEventListener('click', ()=>{
-    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH','ovBlendMode','ovTileFilter'].forEach(localStorage.removeItem.bind(localStorage));
+    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH','ovBlendMode','ovTileFilter','ovDataset'].forEach(localStorage.removeItem.bind(localStorage));
     state.tileScaleX=2; state.tileScaleY=2; state.shiftX=0; state.shiftY=0; state.scaleW=0; state.scaleH=0;
-    blendMode='overlay'; tileFilter='none';
-    applyBlend(); applyTileFilter();
+    blendMode='overlay'; tileFilter='none'; currentKey='precip'; CUR=DATASETS[currentKey]; dsSel.value=currentKey;
+    applyBlend(); applyTileFilter(); setLegendTitle(CUR.legend);
     updateUI(); if(lastCells) rerenderSameData(); if(overlay) applyTransformOnOverlay(overlay, baseBoundsObj);
     toast('Justage & Anzeige zurückgesetzt');
   });
 })();
 
 /* ======== Auto-Render ======== */
-window.addEventListener('load', function(){ setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150); });
+window.addEventListener('load', function(){ setTimeout(function(){ setLegendTitle(CUR.legend); renderOverlay({fit:true, silent:true}); }, 150); });
 </script>
 </body>
 </html>
