@@ -3,104 +3,83 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-<title>RR & SPEI • NÖ & STMK (Client)</title>
+<title>Spartacus RR • Self-Check & Auto-Fix</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
 <style>
   *{box-sizing:border-box}
   html,body,#map{height:100%;margin:0}
-  #map{background:#eef2f7; isolation:isolate;}
-
-  .leaflet-tile-pane{ filter:none; }
-  .leaflet-overlay-pane img.leaflet-image-layer{ mix-blend-mode:overlay; }
-
+  #map{background:#eef2f7;}
+  /* Status-Bar */
+  #status{
+    position:fixed; z-index:6000; top:0; left:0; right:0;
+    display:flex; gap:10px; align-items:center; padding:8px 12px;
+    font:14px system-ui,-apple-system,Segoe UI,Roboto; color:#111; background:#fff; border-bottom:1px solid #e9e9e9;
+  }
+  .pill{display:flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:12px; border:1px solid #ddd; background:#fafafa}
+  .ok{background:#e8f7ee;border-color:#bfe6cd}
+  .warn{background:#fff7e6;border-color:#ffe0a6}
+  .err{background:#ffecec;border-color:#ffb6b6}
+  .dot{width:8px; height:8px; border-radius:50%}
+  .ok .dot{background:#16a34a} .warn .dot{background:#d97706} .err .dot{background:#dc2626}
+  .sp{flex:1}
+  .btn{border:1px solid #dcdcdc; background:#fff; border-radius:8px; padding:6px 10px; cursor:pointer}
+  /* Drawer */
   #drawer{
-    position:fixed; z-index:5000;
-    top:calc(env(safe-area-inset-top,0) + 60px);
-    right:calc(env(safe-area-inset-right,0) + 12px);
-    width:min(420px,94vw); max-height:72vh; overflow:auto;
-    background:#fff; border:1px solid #e5e5e5; border-radius:12px;
-    box-shadow:0 8px 24px rgba(0,0,0,.18);
-    transform:translateX(110%); transition:transform .22s ease-out;
-    padding:12px;
-    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
+    position:fixed; z-index:5000; top:56px; right:12px; width:min(420px,94vw); max-height:72vh; overflow:auto;
+    background:#fff; border:1px solid #e5e5e5; border-radius:12px; box-shadow:0 8px 24px rgba(0,0,0,.18);
+    transform:translateX(110%); transition:transform .22s ease-out; padding:12px;
+    font:14px system-ui,-apple-system,Segoe UI,Roboto;
   }
   #drawer.open{ transform:none; }
-  #drawer .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
-  #drawer .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa; cursor:pointer }
-  #drawer code{ background:#f3f3f3; padding:1px 6px; border-radius:4px }
+  .row{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .kb{ min-width:32px; height:28px; border:1px solid #ddd; border-radius:6px; background:#fafafa; cursor:pointer }
   label{font-size:12px}
   .hint{font-size:12px; opacity:.7}
   input[type="date"]{padding:4px 6px; border:1px solid #ddd; border-radius:6px; font:14px system-ui}
   input[type="range"], select{width:180px}
   .progress{height:6px; background:#eee; border-radius:999px; overflow:hidden; width:100%}
   .bar{height:100%; width:0%; background:#4f46e5; transition:width .15s}
-
-  #toast{
-    position:fixed; left:50%; bottom:14px; transform:translateX(-50%); z-index:5000;
-    background:#111; color:#fff; padding:8px 12px; border-radius:8px; opacity:.92; display:none;
-    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:13px;
-  }
-
-  #chartPanel{
-    position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
-    width:min(680px,96vw); background:#fff; border:1px solid #e5e5e5; border-radius:12px;
-    box-shadow:0 12px 28px rgba(0,0,0,.18); z-index:5000; display:none;
-    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
-  }
-  #chartPanel.open{display:block}
-  #chartHead{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #eee; }
-  #chartBody{ padding:8px 12px 12px 12px; }
-  #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
-  #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
-
-  .leaflet-control.legend {
-    background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5;
-    box-shadow:0 2px 8px rgba(0,0,0,.12); font-family:system-ui,-apple-system,Segoe UI,Roboto;
-  }
+  /* Legend */
+  .leaflet-control.legend { background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5; box-shadow:0 2px 8px rgba(0,0,0,.12); font:14px system-ui; }
   #legendCanvas{ display:block; width:240px; height:12px; image-rendering:pixelated; }
   .legend-row{ display:flex; justify-content:space-between; margin-top:4px; font-size:12px; }
-
-  .leaflet-control.custom{
-    background:#fff; border:1px solid #e5e5e5; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.12);
-    font-family:system-ui,-apple-system,Segoe UI,Roboto; overflow:hidden;
+  /* Map overlay img */
+  .leaflet-overlay-pane img.leaflet-image-layer{
+    image-rendering:pixelated; background:transparent !important; mix-blend-mode:normal !important; filter:none !important;
   }
-  .custom .btn{
-    background:#fff; padding:8px 12px; border:0; border-bottom:1px solid #eee; font-size:14px; width:100%; text-align:left;
-  }
-  .custom .btn:last-child{ border-bottom:none; }
+  /* Gear */
   .gear-btn{
+    position:fixed; z-index:5000; top:60px; right:12px;
     background:#fff; border:1px solid #e5e5e5; border-radius:10px; width:42px; height:42px;
-    display:grid; place-items:center; font-size:18px; line-height:1;
-    box-shadow:0 2px 8px rgba(0,0,0,.12);
+    display:grid; place-items:center; font-size:18px; box-shadow:0 2px 8px rgba(0,0,0,.12);
   }
 </style>
 </head>
 <body>
+  <!-- Statusleiste -->
+  <div id="status">
+    <div id="st-init"  class="pill warn"><span class="dot"></span>Init</div>
+    <div id="st-bbox"  class="pill warn"><span class="dot"></span>BBOX</div>
+    <div id="st-dates" class="pill warn"><span class="dot"></span>Datum</div>
+    <div id="st-fetch" class="pill warn"><span class="dot"></span>Fetch</div>
+    <div id="st-draw"  class="pill warn"><span class="dot"></span>Render</div>
+    <div class="sp"></div>
+    <button id="rerun" class="btn">↺ Neu versuchen</button>
+    <button id="openDrawer" class="btn">⚙️</button>
+  </div>
+
   <div id="map"></div>
 
   <!-- Drawer -->
   <div id="drawer" aria-hidden="true">
     <div class="row" style="justify-content:space-between; width:100%">
       <div>
-        <div><strong>Overlay aus API rendern (Client)</strong></div>
-        <div class="hint">SPARTACUS v2 (RR) &amp; WINFORE v2 (SPEI30)</div>
+        <div><strong>RR 14-Tage (SPARTACUS v2) — Auto-Fix</strong></div>
+        <div class="hint">Startet automatisch • zeigt Status oben</div>
       </div>
       <button class="kb" id="renderBtn">Laden &amp; Rendern</button>
     </div>
 
-    <!-- Dataset-Umschalter -->
-    <div class="row">
-      <label>Datensatz:&nbsp;
-        <select id="datasetSel" title="Niederschlag (14T-Summe) oder SPEI30 (Bodenfeuchte-Index)">
-          <option value="precip">Niederschlag (RR) • 14-Tage-Summe</option>
-          <option value="spei30">„Bodenfeuchte“ (SPEI30) • letzter Tag</option>
-        </select>
-      </label>
-      <span class="hint">SPEI: &lt;0 trocken, &gt;0 feucht</span>
-    </div>
-
-    <!-- Presets -->
     <div class="row">
       <label>Bundesland:&nbsp;
         <select id="preset">
@@ -109,6 +88,8 @@
         </select>
       </label>
       <button class="kb" id="applyPreset">Übernehmen</button>
+      <button class="kb" id="dbgPattern" title="Schachbrett">Debug: Testbild</button>
+      <button class="kb" id="dbgCells" title="Zellen bunt">Debug: Zellen</button>
     </div>
 
     <div class="row">
@@ -128,43 +109,10 @@
     </div>
 
     <div class="row">
-      <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="85">
-        <span id="ovv">85%</span></label>
-      <label><input type="checkbox" id="showBounds"> Bounds-Rahmen</label>
-      <button class="kb" id="dlPng">PNG speichern</button>
-      <button class="kb" id="resetTuning" title="Alle lokalen Justagen & Tile-Skalen zurücksetzen">Justage zurücksetzen</button>
-    </div>
-
-    <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row"><strong>Manuelle Justierung</strong> <span class="hint">(persistiert lokal)</span></div>
-
-    <div class="row">
-      <small>Shift X:</small>
-      <button class="kb" id="left">←</button>
-      <div><code id="pxX">0</code>&nbsp;px</div>
-      <button class="kb" id="right">→</button>
-    </div>
-
-    <div class="row">
-      <small>Shift Y:</small>
-      <button class="kb" id="up">↑</button>
-      <div><code id="pxY">0</code>&nbsp;px</div>
-      <button class="kb" id="down">↓</button>
-      <small class="hint">(↑ = nach Norden)</small>
-    </div>
-
-    <div class="row">
-      <small>Breite (W):</small>
-      <button class="kb" id="wMinus">W−</button>
-      <div><code id="wPct">0.0</code>&nbsp;%</div>
-      <button class="kb" id="wPlus">W+</button>
-    </div>
-
-    <div class="row">
-      <small>Höhe (H):</small>
-      <button class="kb" id="hMinus">H−</button>
-      <div><code id="hPct">0.0</code>&nbsp;%</div>
-      <button class="kb" id="hPlus">H+</button>
+      <label>Overlay&nbsp;<input type="range" id="opacity" min="30" max="100" value="90">
+        <span id="ovv">90%</span></label>
+      <button class="kb" id="dlPng">PNG</button>
+      <button class="kb" id="resetTuning">Justage reset</button>
     </div>
 
     <div style="margin:6px 0;border-top:1px solid #eee"></div>
@@ -182,595 +130,301 @@
     <div class="row">
       <label>Palette:&nbsp;
         <select id="palette">
-          <option value="spectral">Spectral (mehrfarbig)</option>
-          <option value="rainbow">Rainbow (HSV)</option>
-          <option value="viridis">Viridis (grün–blau)</option>
+          <option value="spectral">Spectral</option>
+          <option value="rainbow">Rainbow</option>
+          <option value="viridis">Viridis</option>
         </select>
       </label>
-    </div>
-
-    <!-- Blend-Mode & Karten-Signal -->
-    <div class="row">
-      <label>Blend:&nbsp;
-        <select id="blendMode">
-          <option value="overlay">overlay (empfohlen)</option>
-          <option value="multiply">multiply</option>
-          <option value="darken">darken</option>
-          <option value="color-burn">color-burn</option>
-        </select>
-      </label>
-      <span class="hint">„overlay“ lässt Schwarz &amp; Weiß durchscheinen</span>
-    </div>
-
-    <div class="row">
-      <label>Kartensignal:&nbsp;
-        <select id="tileFilterSel">
-          <option value="none">aus</option>
-          <option value="contrast(1.15) saturate(1.10) brightness(1.05)">Boost leicht</option>
-          <option value="contrast(1.35) saturate(1.20) brightness(1.05)">Boost stark</option>
-        </select>
-      </label>
-      <span class="hint">hebt OSM-Karte hervor</span>
     </div>
   </div>
-
-  <!-- Chart-Panel -->
-  <div id="chartPanel" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
-    <div id="chartHead">
-      <div>
-        <div id="chartTitle"><strong>Werte am Punkt</strong></div>
-        <div id="chartSub" class="hint"></div>
-      </div>
-      <button id="closeChart">Schließen</button>
-    </div>
-    <div id="chartBody">
-      <canvas id="chartCanvas" height="160"></canvas>
-      <div id="chartMeta"></div>
-    </div>
-  </div>
-
-  <div id="toast"></div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script>
-/* ======== Datensätze ======== */
-const DATASETS = {
-  precip: {
-    key: 'precip',
-    url: 'https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km',
-    param: 'RR',
-    name: 'Niederschlag (14-Tage-Summe)',
-    legend: 'RR (mm)',
-    unit: 'mm',
-    overlayAgg: 'sum',   // Summe über Zeitraum
-    chartType: 'bar',    // Balken
-    chartLabel: 'RR (mm/Tag)'
-  },
-  spei30: {
-    key: 'spei30',
-    url: 'https://dataset.api.hub.geosphere.at/v1/grid/historical/winfore-v2-1d-1km',
-    param: 'SPEI30',
-    name: '„Bodenfeuchte“ (SPEI30)',
-    legend: 'SPEI (–)',
-    unit: 'SPEI',
-    overlayAgg: 'last',  // letzter Tag im Zeitraum
-    chartType: 'line',   // Linienchart
-    chartLabel: 'SPEI30 (täglich)',
-    yMin: -3, yMax: 3
-  }
+/*** ========= Mini-Framework: Status, Auto-Fix, nie „leer“ ========= ***/
+const API = 'https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km';
+const PARAM = 'RR';
+const SPARTACUS_BOUNDS = Object.freeze({ south:46.16133, west:9.393909, north:49.17754, east:17.38218 });
+const CANVAS_W = 1400;
+
+const statusEls = {
+  init:  document.getElementById('st-init'),
+  bbox:  document.getElementById('st-bbox'),
+  dates: document.getElementById('st-dates'),
+  fetch: document.getElementById('st-fetch'),
+  draw:  document.getElementById('st-draw')
 };
-let currentKey = localStorage.getItem('ovDataset') || 'precip';
-let CUR = DATASETS[currentKey];
+function mark(el, cls, txt){ el.classList.remove('ok','warn','err'); el.classList.add(cls); if(txt) el.lastChild.nodeValue = txt; }
+function ok(k,t){ mark(statusEls[k],'ok',  t||statusEls[k].textContent); }
+function warn(k,t){ mark(statusEls[k],'warn',t||statusEls[k].textContent); }
+function err(k,t){ mark(statusEls[k],'err', t||statusEls[k].textContent); }
 
-/* ======== Map ======== */
-function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg; el.style.display='block';
-  clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2200); }
-var map = L.map('map', { zoomControl:false });
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+const bar=document.getElementById('bar'), pct=document.getElementById('pct');
+function progress(frac){ const p=Math.max(0,Math.min(1,frac||0)); bar.style.width=(Math.round(p*100))+'%'; pct.textContent=(Math.round(p*100))+'%'; }
 
-/* ======== Custom Controls ======== */
-var LeftControl = L.Control.extend({
-  options:{ position:'topleft' },
-  onAdd:function(){
-    var container = L.DomUtil.create('div','leaflet-control custom');
-    var btnLoc = L.DomUtil.create('button','btn',container); btnLoc.id='loc'; btnLoc.textContent='📍 Meine Position';
-    var btnReset = L.DomUtil.create('button','btn',container); btnReset.id='reset'; btnReset.textContent='↺ Ansicht/Reset';
-    L.DomEvent.disableClickPropagation(container); return container;
-  }
-});
-map.addControl(new LeftControl());
-var GearControl = L.Control.extend({
-  options:{ position:'topright' },
-  onAdd:function(){
-    var btn = L.DomUtil.create('button','gear-btn leaflet-control custom'); btn.id='fab'; btn.title='Einstellungen'; btn.textContent='⚙️';
-    L.DomEvent.disableClickPropagation(btn); return btn;
-  }
-});
-map.addControl(new GearControl());
+function clamp(v,min,max){ return Math.min(max, Math.max(min, v)); }
+function clampBBox([s,w,n,e]){
+  s=clamp(s,SPARTACUS_BOUNDS.south,SPARTACUS_BOUNDS.north);
+  n=clamp(n,SPARTACUS_BOUNDS.south,SPARTACUS_BOUNDS.north);
+  w=clamp(w,SPARTACUS_BOUNDS.west, SPARTACUS_BOUNDS.east);
+  e=clamp(e,SPARTACUS_BOUNDS.west, SPARTACUS_BOUNDS.east);
+  const eps=1e-6; if(n<=s) n=Math.min(SPARTACUS_BOUNDS.north, s+eps); if(e<=w) e=Math.min(SPARTACUS_BOUNDS.east, w+eps);
+  return [s,w,n,e];
+}
+function yesterday(){ const t=new Date(); t.setDate(t.getDate()-1); return t.toISOString().slice(0,10); }
+function start14(){ const e=new Date(); e.setDate(e.getDate()-1); const s=new Date(e); s.setDate(s.getDate()-13); return s.toISOString().slice(0,10); }
 
-/* ======== Drawer ======== */
-var fab=document.getElementById('fab'), drawer=document.getElementById('drawer');
-function toggleDrawer(){ var open=!drawer.classList.contains('open'); drawer.classList.toggle('open',open); drawer.setAttribute('aria-hidden', String(!open)); }
-fab.addEventListener('click', toggleDrawer);
+/* Map */
+const map = L.map('map',{zoomControl:false}).setView([47.6,14.3],7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap'}).addTo(map);
+const overlayOptions={opacity:0.9,interactive:false};
+let overlay=null, baseBounds=null, baseBoundsObj=null, lastCells=null, lastCanvas=null, lastStepPx=null;
 
-/* ======== Presets ======== */
+/* UI basic */
+const drawer=document.getElementById('drawer'), openDrawer=document.getElementById('openDrawer');
+openDrawer.addEventListener('click', ()=> drawer.classList.toggle('open'));
+document.getElementById('rerun').addEventListener('click', ()=> autoRun(true));
+document.getElementById('renderBtn').addEventListener('click', ()=> autoRun(true));
+
+/* Presets */
 const PRESETS = {
-  noe: { name:"Niederösterreich", bbox:[47.419564822,14.450844322,49.024548178,17.075640678], center:[48.30,15.75] },
-  stmk:{ name:"Steiermark",       bbox:[46.35,13.55,47.75,16.51],                    center:[47.25,15.25] }
+  noe:[47.419564822,14.450844322,49.024548178,17.075640678],
+  stmk:[46.35,13.55,47.75,16.51]
 };
-var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
-function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
-  document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
-applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value); });
-(function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
-  document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
+const presetSel=document.getElementById('preset');
+document.getElementById('applyPreset').addEventListener('click', ()=>{
+  const bb=PRESETS[presetSel.value]||PRESETS.noe;
+  document.getElementById('bbox').value=bb.join(',');
+  autoRun(true);
+});
 
-/* ======== Datum: letzte 14 Tage ======== */
-var startEl=document.getElementById('start'), endEl=document.getElementById('end');
-(function(){
-  var today=new Date(), end=new Date(today.getFullYear(), today.getMonth(), today.getDate()-1), start=new Date(end); start.setDate(end.getDate()-13);
-  function fmt(d){ return d.toISOString().slice(0,10); }
-  startEl.value=fmt(start); endEl.value=fmt(end);
-})();
+/* Dates */
+const startEl=document.getElementById('start'), endEl=document.getElementById('end');
+(function(){ startEl.value=start14(); endEl.value=yesterday(); })();
 
-/* ======== Overlay/Legend/Palette/Progress ======== */
-var overlay=null, rect=null, baseBounds=null, baseBoundsObj=null;
-var lastCanvas=null, lastCells=null, lastStepPx=null, clickMarker=null;
+/* Palette */
+const paletteSel=document.getElementById('palette'); let currentPalette=localStorage.getItem('ovPalette')||'spectral'; paletteSel.value=currentPalette;
+paletteSel.addEventListener('change', ()=>{ currentPalette=paletteSel.value; localStorage.setItem('ovPalette',currentPalette); if(lastCells) rerenderSameData(); });
 
-var bar=document.getElementById('bar'), pct=document.getElementById('pct');
-function progress(frac){ var p=Math.max(0,Math.min(1,frac||0)); bar.style.width=(Math.round(p*100))+'%'; pct.textContent=(Math.round(p*100))+'%'; }
+/* Overlay opacity + PNG */
+document.getElementById('opacity').addEventListener('input', function(){ if(overlay) overlay.setOpacity(Number(this.value)/100); document.getElementById('ovv').textContent=this.value+'%'; });
+document.getElementById('dlPng').addEventListener('click', ()=>{ if(!lastCanvas) return; const a=document.createElement('a'); a.download='overlay.png'; a.href=lastCanvas.toDataURL('image/png'); a.click(); });
 
-var paletteSel=document.getElementById('palette');
-var currentPalette=localStorage.getItem('ovPalette')||'spectral';
-paletteSel.value=currentPalette;
-paletteSel.addEventListener('change', function(){ currentPalette=this.value; localStorage.setItem('ovPalette', currentPalette); if(lastCells){ rerenderSameData(); } });
+/* Tiles scale (kept simple) */
+const tileX=document.getElementById('tileX'), tileY=document.getElementById('tileY'), tileXVal=document.getElementById('tileXVal'), tileYVal=document.getElementById('tileYVal');
+let tileScaleX=2, tileScaleY=2;
+tileX.addEventListener('input', ()=>{ tileScaleX=Number(tileX.value)/100; tileXVal.textContent=tileX.value+'%'; if(lastCells) rerenderSameData(); });
+tileY.addEventListener('input', ()=>{ tileScaleY=Number(tileY.value)/100; tileYVal.textContent=tileY.value+'%'; if(lastCells) rerenderSameData(); });
 
-function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
-function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t))]; }
-function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); var c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)), r=0,g=0,b=0;
-  if(hp<1){r=c;g=x;} else if(hp<2){r=x;g=c;} else if(hp<3){g=c;b=x;} else if(hp<4){g=x;b=c;} else if(hp<5){r=x;b=c;} else {r=c;b=x;} var m=l-c/2; return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];}
-function getStops(name){
-  if(name==='viridis'){ return [{t:0.00,c:[68,1,84]},{t:0.07,c:[72,30,110]},{t:0.14,c:[64,67,135]},{t:0.21,c:[55,90,140]},
-                          {t:0.28,c:[45,115,142]},{t:0.35,c:[37,137,141]},{t:0.42,c:[31,159,136]},{t:0.50,c:[43,183,122]},
-                          {t:0.58,c:[84,199,101]},{t:0.66,c:[129,211,78]},{t:0.74,c:[173,220,52]},{t:0.82,c:[212,225,33]},
-                          {t:0.90,c:[238,229,27]},{t:0.96,c:[247,229,32]},{t:1.00,c:[253,231,37]}]; }
-  if(name==='spectral'){ var cols=['#9e0142','#d53e4f','#f46d43','#fdae61','#fee08b','#ffffbf','#e6f598','#abdda4','#66c2a5','#3288bd','#5e4fa2'];
-                         var s=[]; for(var i=0;i<cols.length;i++){ s.push({t:i/(cols.length-1), c:hex2rgb(cols[i])}); } return s; }
-  if(name==='rainbow'){ var N=9, s=[]; for(var i=0;i<N;i++){ var t=i/(N-1), hue=260+(-280*t); s.push({t:t, c:hslToRgb(hue,1.0,0.52)}); } return s; }
-  return getStops('spectral');
-}
-var STOPS=getStops(currentPalette), PALETTE=null;
-function colorFromStops(t){ t=Math.max(0,Math.min(1,t)); var i=0; while(i<STOPS.length-1 && t>STOPS[i+1].t) i++; var a=STOPS[i], b=STOPS[i+1], local=(t-a.t)/(b-a.t+1e-12);
-  return lerpColor(a.c,b.c,local); }
-function buildPalette(name,n){ STOPS=getStops(name); var arr=new Array(n); for(var i=0;i<n;i++){ var t=i/(n-1); arr[i]=colorFromStops(t);} return arr; }
-function colorFor(v,vmin,vmax){ if(!isFinite(v)) return [0,0,0,0]; var t=(v-vmin)/(vmax-vmin+1e-12); t=Math.max(0,Math.min(1,t));
-  var c=PALETTE && PALETTE.length ? PALETTE[Math.round(t*(PALETTE.length-1))] : colorFromStops(t); return [c[0],c[1],c[2],255]; }
-
-var legendCtrl=L.control({position:'bottomright'});
-legendCtrl.onAdd=function(map){ var div=L.DomUtil.create('div','leaflet-control legend');
-  div.innerHTML='<div id="legendTitle" style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>';
+/* Legend */
+const legendCtrl=L.control({position:'bottomright'});
+legendCtrl.onAdd=function(){ const div=L.DomUtil.create('div','leaflet-control legend');
+  div.innerHTML='<div id="legendTitle" style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">0–98%</div>';
   L.DomEvent.disableClickPropagation(div); return div; }; legendCtrl.addTo(map);
-function setLegendTitle(txt){ var t=document.getElementById('legendTitle'); if(t) t.textContent=txt; }
+
+function brighten(rgb, f=0.18){ return [ Math.round(rgb[0]+(255-rgb[0])*f), Math.round(rgb[1]+(255-rgb[1])*f), Math.round(rgb[2]+(255-rgb[2])*f) ]; }
+function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
+function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); const c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)); let r=0,g=0,b=0;
+  if(hp<1){r=c;g=x;} else if(hp<2){r=x;g=c;} else if(hp<3){g=c;b=x;} else if(hp<4){g=x;b=c;} else if(hp<5){r=x;b=c;} else {r=c;b=x;} const m=l-c/2; return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];}
+function stops(name){
+  if(name==='viridis') return [[68,1,84],[72,30,110],[64,67,135],[55,90,140],[45,115,142],[37,137,141],[31,159,136],[43,183,122],[84,199,101],[129,211,78],[173,220,52],[212,225,33],[238,229,27],[247,229,32],[253,231,37]];
+  if(name==='spectral'){ const s=['#9e0142','#d53e4f','#f46d43','#fdae61','#fee08b','#ffffbf','#e6f598','#abdda4','#66c2a5','#3288bd','#5e4fa2'].map(hex2rgb); return s; }
+  if(name==='rainbow'){ const N=9, s=[]; for(let i=0;i<N;i++){ const t=i/(N-1), hue=260+(-280*t); s.push(hslToRgb(hue,1.0,0.56)); } return s; }
+  return stops('spectral');
+}
+let STOPS = stops(currentPalette);
+function colorForT(t){ t=Math.max(0,Math.min(1,t)); const idx=t*(STOPS.length-1), i=Math.floor(idx), j=Math.min(STOPS.length-1,i+1), local=idx-i;
+  const c=[ Math.round(STOPS[i][0]+(STOPS[j][0]-STOPS[i][0])*local),
+            Math.round(STOPS[i][1]+(STOPS[j][1]-STOPS[i][1])*local),
+            Math.round(STOPS[i][2]+(STOPS[j][2]-STOPS[i][2])*local) ];
+  const cc=brighten(c,0.18); return `rgb(${cc[0]},${cc[1]},${cc[2]})`;
+}
 function updateLegend(vmin,vmax){
-  var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
-  for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
-    for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
+  const c=document.getElementById('legendCanvas'); const ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
+  for(let x=0;x<w;x++){ const t=x/(w-1); const col=colorForT(t).match(/\d+/g).map(Number);
+    for(let y=0;y<h;y++){ const i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
   ctx.putImageData(img,0,0);
-  var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
-  if(vminEl) vminEl.textContent=vmin.toFixed(1);
-  if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1);
+  document.getElementById('vminLabel').textContent=vmin.toFixed(1);
+  document.getElementById('vmaxLabel').textContent=vmax.toFixed(1);
 }
 
-/* ======== Stats ======== */
-function quantile(sorted,q){ if(!sorted.length) return NaN; var pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
-  if(sorted[base+1]!==undefined) return sorted[base]+rest*(sorted[base+1]-sorted[base]); return sorted[base]; }
-function robustRange(vals){ var a=[]; for(var i=0;i<vals.length;i++) if(isFinite(vals[i])) a.push(vals[i]); if(!a.length) return {vmin:0,vmax:1};
-  a.sort(function(x,y){return x-y;}); var v2=quantile(a,0.02), v98=quantile(a,0.98); if(!isFinite(v2)||!isFinite(v98)||v98<=v2){ v2=a[0]; v98=a[a.length-1]; }
-  if(v98<=v2) v98=v2+1e-6; return {vmin:v2, vmax:v98}; }
-
-/* ======== API ======== */
-function loadFeatureCollection(ds,start,end,bbox){
-  var params=new URLSearchParams({ parameters:ds.param, start:start, end:end, bbox:bbox.join(',') });
-  return fetch(ds.url+"?"+params.toString(), { headers:{ "Accept":"application/json" } })
-    .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t); }); return r.json(); })
-    .then(function(fc){ if(!fc || fc.type!=="FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten."); return fc; });
+/*** Fetch + Render ***/
+function parseValues(props, nt){
+  const p=props||{}, key=PARAM;
+  function norm(a){ const out=new Array(a.length); for(let i=0;i<a.length;i++){ let v=Number(a[i]); if(!isFinite(v)||v<=-9000) v=NaN; out[i]=v; } return out; }
+  if(Array.isArray(p[key])) return norm(p[key]);
+  if(p[key] && Array.isArray(p[key].values)) return norm(p[key].values);
+  if(p[key] && Array.isArray(p[key].data))   return norm(p[key].data);
+  if(p.values && Array.isArray(p.values[key]))return norm(p.values[key]);
+  if(Array.isArray(p.data)) return norm(p.data);
+  return null;
 }
-function extractValues(props,nt){
-  var prefer=[CUR.param, String(CUR.param).toLowerCase(), "RR", "rr", "SPEI30","spei30", "value","values"];
-  for(var i=0;i<prefer.length;i++){ var v=props[prefer[i]];
-    if(Array.isArray(v) && v.length>0){ var out=[]; for(var j=0;j<v.length;j++){ var x=v[j]; if(typeof x==='number' && isFinite(x)) out.push(Number(x)); } if(out.length>0) return out; } }
-  // Fallback: erstes Zahlenarray irgendwo
-  var found=null; (function scan(o){ if(found) return;
-    if(Array.isArray(o)){ var ok=o.some(z=>typeof z==='number'&&isFinite(z)); if(ok){ found=o.map(Number); return; }
-                          for(var q=0;q<o.length;q++) scan(o[q]); }
-    else if(o && typeof o==='object'){ for(var k in o) scan(o[k]); }
-  })(props);
-  return found;
-}
-function bboxFromGeom(geom){
-  var coords=geom && geom.coordinates; var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
-  (function walk(node){ if(!node) return; if(Array.isArray(node)){
-    if(node.length>=2 && typeof node[0]==='number' && typeof node[1]==='number'){ var x=node[0], y=node[1];
-      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
-    else { for (var i=0;i<node.length;i++) walk(node[i]); } } })(coords);
+function bboxFromGeom(g){
+  let minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
+  (function walk(n){ if(!n) return; if(Array.isArray(n)){ if(n.length>=2 && typeof n[0]==='number'){ const x=n[0], y=n[1];
+    if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; } else { for(const c of n) walk(c); } } })(g.coordinates);
   return [minx,miny,maxx,maxy];
 }
+function robustRange(vals){
+  const a=vals.filter(v=>isFinite(v) && v>=0).sort((x,y)=>x-y);
+  if(!a.length) return {vmin:0,vmax:1};
+  const pos=(a.length-1)*0.98, lo=Math.floor(pos), hi=Math.ceil(pos), v98= a[lo]+(pos-lo)*(a[hi]-a[lo]);
+  return {vmin:0, vmax: Math.max(1, v98)};
+}
+function renderCells(cells, bounds){
+  const widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
+  const PX_W=CANVAS_W, PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+  const cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H; const ctx=cvs.getContext('2d'); ctx.imageSmoothingEnabled=false;
 
-/* ======== Raster-Größe ======== */
-function medianFrom(arr){ var a=[]; for(var i=0;i<arr.length;i++) if(isFinite(arr[i])) a.push(arr[i]);
-  if(!a.length) return NaN; a.sort(function(x,y){return x-y;}); var mid=0.5*(a.length-1), lo=Math.floor(mid), hi=Math.ceil(mid); return a[lo]+(mid-lo)*(a[hi]-a[lo]); }
-function estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,pxW,pxH){
-  var wpx=[],hpx=[],cx=[],cy=[];
-  for(var i=0;i<cells.length;i++){
-    var cw=(cells[i].maxx-cells[i].minx)/lonPerPx, ch=(cells[i].maxy-cells[i].miny)/latPerPx;
-    if(cw>0) wpx.push(cw); if(ch>0) hpx.push(ch);
-    var cx_deg=0.5*(cells[i].minx+cells[i].maxx), cy_deg=0.5*(cells[i].miny+cells[i].maxy);
-    cx.push((cx_deg-bounds.west)/lonPerPx); cy.push((bounds.north-cy_deg)/latPerPx);
+  const lonPerPx=widthDeg/PX_W, latPerPx=heightDeg/PX_H;
+  const vals=cells.map(c=>c.v).filter(v=>isFinite(v)&&v>=0);
+  const {vmin,vmax}=robustRange(vals); updateLegend(vmin,vmax);
+
+  let drawn=0;
+  for(const c of cells){
+    if(!isFinite(c.v) || c.v<0) continue;
+    const cx=0.5*(c.minx+c.maxx), cy=0.5*(c.miny+c.maxy);
+    const cxpx=(cx-bounds.west)/lonPerPx, cypx=(bounds.north-cy)/latPerPx;
+    // heuristische Zellgröße (1km~) + skaliert
+    const dx=((c.maxx-c.minx)/lonPerPx)||4, dy=((c.maxy-c.miny)/latPerPx)||4;
+    const halfW=Math.max(0.5, (dx*tileScaleX)/2), halfH=Math.max(0.5, (dy*tileScaleY)/2);
+    let x=Math.floor(cxpx-halfW), y=Math.floor(cypx-halfH), w=Math.max(1,Math.ceil(halfW*2)), h=Math.max(1,Math.ceil(halfH*2));
+    if(x+w<0||y+h<0||x>PX_W||y>PX_H) continue;
+    if(x<0){w+=x;x=0;} if(y<0){h+=y;y=0;} if(x+w>PX_W){w=PX_W-x;} if(y+h>PX_H){h=PX_H-y;}
+    const t=(c.v-vmin)/(vmax-vmin+1e-12); ctx.fillStyle=colorForT(Math.max(0,Math.min(1,t))); ctx.fillRect(x,y,w,h); drawn++;
   }
-  var dx=medianFrom(wpx), dy=medianFrom(hpx);
-  if(!isFinite(dx)||dx<=0){ cx.sort(function(a,b){return a-b;}); var difX=[]; for(var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if(d>0.25) difX.push(d);} dx=medianFrom(difX); }
-  if(!isFinite(dy)||dy<=0){ cy.sort(function(a,b){return a-b;}); var difY=[]; for(var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if(d2>0.25) difY.push(d2);} dy=medianFrom(difY); }
-  if(!isFinite(dx)||dx<=0||!isFinite(dy)||dy<=0){
-    var N=Math.max(1,cells.length), AR=pxW/pxH;
-    if(!isFinite(dx)||dx<=0) dx=pxW/Math.sqrt(N*AR);
-    if(!isFinite(dy)||dy<=0) dy=pxH/Math.sqrt(N/AR);
-  }
-  return { dx:Math.max(1,dx*1.05), dy:Math.max(1,dy*1.05) };
+  return {canvas:cvs, drawn};
+}
+function placeOverlay(cvs){
+  lastCanvas=cvs;
+  const url=cvs.toDataURL('image/png');
+  if(overlay) map.removeLayer(overlay);
+  overlay=L.imageOverlay(url, baseBounds, overlayOptions).addTo(map);
 }
 
-/* ======== Justage / Tile ======== */
-var state={
-  shiftX:Number(localStorage.getItem('ovShiftX')||0)||0,
-  shiftY:Number(localStorage.getItem('ovShiftY')||0)||0,
-  scaleW:Number(localStorage.getItem('ovScaleW')||0)||0,
-  scaleH:Number(localStorage.getItem('ovScaleH')||0)||0,
-  tileScaleX:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleX')||2)||2)),
-  tileScaleY:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleY')||2)||2)),
-};
-var pxX, pxY, wPct, hPct, tileX, tileY, tileXVal, tileYVal, tileXpx, tileYpx;
-function bindUIRefs(){
-  pxX=document.getElementById('pxX'); pxY=document.getElementById('pxY');
-  wPct=document.getElementById('wPct'); hPct=document.getElementById('hPct');
-  tileX=document.getElementById('tileX'); tileY=document.getElementById('tileY');
-  tileXVal=document.getElementById('tileXVal'); tileYVal=document.getElementById('tileYVal');
-  tileXpx=document.getElementById('tileXpx'); tileYpx=document.getElementById('tileYpx');
-}
-bindUIRefs();
-function updateUI(){
-  state.tileScaleX=Math.min(6,Math.max(2,state.tileScaleX));
-  state.tileScaleY=Math.min(6,Math.max(2,state.tileScaleY));
-  pxX.textContent=state.shiftX; pxY.textContent=state.shiftY;
-  wPct.textContent=state.scaleW.toFixed(1); hPct.textContent=state.scaleH.toFixed(1);
-  tileX.value=String(Math.round(state.tileScaleX*100)); tileY.value=String(Math.round(state.tileScaleY*100));
-  tileXVal.textContent=Math.round(state.tileScaleX*100)+'%'; tileYVal.textContent=Math.round(state.tileScaleY*100)+'%';
-  if(lastStepPx){ tileXpx.textContent="≈ "+Math.round(lastStepPx.dx*state.tileScaleX)+" px"; tileYpx.textContent="≈ "+Math.round(lastStepPx.dy*state.tileScaleY)+" px"; }
-  else { tileXpx.textContent="– px"; tileYpx.textContent="– px"; }
-}
-function persist(){
-  localStorage.setItem('ovShiftX', String(state.shiftX));
-  localStorage.setItem('ovShiftY', String(state.shiftY));
-  localStorage.setItem('ovScaleW', String(state.scaleW));
-  localStorage.setItem('ovScaleH', String(state.scaleH));
-  localStorage.setItem('ovTileScaleX', String(state.tileScaleX));
-  localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
-  updateUI();
-  applyTransformOnOverlay(overlay, baseBoundsObj);
-}
-
-/* ======== Blend & Tile-Filter (robust) ======== */
-var blendMode = localStorage.getItem('ovBlendMode') || 'overlay';
-var tileFilter = localStorage.getItem('ovTileFilter') || 'none';
-function applyBlend(){
-  if (map && map.getPanes && map.getPanes().overlayPane){
-    map.getPanes().overlayPane.style.mixBlendMode = blendMode;
-  }
-  if (overlay && overlay._image){
-    overlay._image.style.mixBlendMode = blendMode;
-    void overlay._image.offsetHeight;
-  }
-}
-function applyTileFilter(){
-  if (map && map.getPanes && map.getPanes().tilePane){
-    map.getPanes().tilePane.style.filter = tileFilter;
-    map.getPanes().tilePane.style.willChange = tileFilter==='none' ? '' : 'filter';
-  }
-}
-function bindBlendRef(){
-  var sel = document.getElementById('blendMode');
-  if (sel){
-    sel.value = blendMode;
-    sel.addEventListener('change', function(){
-      blendMode = this.value;
-      localStorage.setItem('ovBlendMode', blendMode);
-      applyBlend();
-    });
-  }
-}
-function bindTileFilterRef(){
-  var sel = document.getElementById('tileFilterSel');
-  if (sel){
-    sel.value = tileFilter;
-    sel.addEventListener('change', function(){
-      tileFilter = this.value;
-      localStorage.setItem('ovTileFilter', tileFilter);
-      applyTileFilter();
-    });
-  }
-}
-
-/* ======== Renderer ======== */
-const CANVAS_W = 1536;
-function aggregateCell(values){
-  if(!Array.isArray(values) || !values.length) return NaN;
-  if(CUR.overlayAgg==='sum'){
-    var s=0; for(var i=0;i<values.length;i++){ var v=values[i]; if(isFinite(v)) s+=v; } return s;
-  } else if(CUR.overlayAgg==='last'){
-    for(var j=values.length-1;j>=0;j--){ var vv=values[j]; if(isFinite(vv)) return vv; }
-    return values[values.length-1];
-  }
-  return values[0];
-}
-function renderToCanvas(cells,bounds){
-  var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
-  var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
-  var cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H;
-  var ctx=cvs.getContext('2d',{willReadFrequently:false}); ctx.imageSmoothingEnabled=false;
-  var img=ctx.createImageData(PX_W,PX_H), data=img.data;
-  var lonPerPx=widthDeg/PX_W, latPerPx=heightDeg/PX_H;
-
-  var vals=new Array(cells.length); for(var i=0;i<cells.length;i++) vals[i]=cells[i].v;
-  var rr=robustRange(vals), vmin=rr.vmin, vmax=rr.vmax;
-
-  PALETTE=buildPalette(currentPalette,256);
-  setLegendTitle(CUR.legend);
-  updateLegend(vmin,vmax);
-
-  var stepPx=estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,PX_W,PX_H); lastStepPx=stepPx;
-  var done=0;
-
-  for (var c=0;c<cells.length;c++){
-    var cell=cells[c];
-    var cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
-    var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
-    var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
-
-    var halfW = 0.5 * (cw_px>1 ? cw_px : stepPx.dx);
-    var halfH = 0.5 * (ch_px>1 ? ch_px : stepPx.dy);
-    halfW = Math.max(0.5, halfW * state.tileScaleX);
-    halfH = Math.max(0.5, halfH * state.tileScaleY);
-
-    var px0=Math.max(0,Math.floor(cx_px-halfW));
-    var px1=Math.min(PX_W-1,Math.ceil (cx_px+halfW));
-    var py0=Math.max(0,Math.floor(cy_px-halfH));
-    var py1=Math.min(PX_H-1,Math.ceil (cy_px+halfH));
-    if(px1<px0 || py1<py0) continue;
-
-    var col=colorFor(cell.v,vmin,vmax), r=col[0], g=col[1], b=col[2], a=255;
-    for (var y=py0; y<=py1; y++){
-      var idx=(y*PX_W+px0)*4;
-      for (var x=px0; x<=px1; x++){
-        data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4;
-      }
-    }
-    done++; if((done%1500)===0) progress(done/cells.length);
-  }
-
-  var ctx2=cvs.getContext('2d'); ctx2.putImageData(img,0,0); progress(1);
-  return { canvas:cvs, width:PX_W, height:PX_H };
-}
-
-/* ======== Overlay ======== */
-function applyTransformOnOverlay(ov,base){
-  if(!ov||!ov._image||!base) return;
-  var B=base, w0=(B.east-B.west), h0=(B.north-B.south), cx=B.west+w0/2, cy=B.south+h0/2;
-  var wdeg=w0*(1+state.scaleW/100), hdeg=h0*(1+state.scaleH/100);
-  var wpx=ov._image.naturalWidth||0, hpx=ov._image.naturalHeight||0;
-  var lonPerPx=wpx?(w0/wpx):0, latPerPx=hpx?(h0/hpx):0;
-  var dLon=state.shiftX*lonPerPx, dLat=state.shiftY*latPerPx;
-  var west=(cx-wdeg/2)+dLon, east=(cx+wdeg/2)+dLon, south=(cy-hdeg/2)+dLat, north=(cy+hdeg/2)+dLat;
-  var adj=L.latLngBounds([south,west],[north,east]); ov.setBounds(adj);
-  if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
-}
-function placeOverlayFromCanvas(rr){
-  lastCanvas=rr.canvas;
-  var url=rr.canvas.toDataURL("image/png");
-  if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
-  overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
-  overlay.on('load', function(){
-    applyBlend();
-    applyTransformOnOverlay(overlay, baseBoundsObj);
-    updateUI();
-  });
-}
-function rerenderSameData(){ if(!lastCells||!baseBoundsObj){ toast("Bitte erst laden"); return; } progress(0.05); var rr=renderToCanvas(lastCells, baseBoundsObj); placeOverlayFromCanvas(rr); }
-
-/* ======== Render-Flow ======== */
-function renderOverlay(opts){
-  opts=opts||{}; progress(0); if(!opts.silent) toast("Lade Daten …");
+/*** Auto-Run Pipeline ***/
+async function autoRun(fit){
   try{
-    var start=startEl.value, end=endEl.value;
-    var partsStr=document.getElementById('bbox').value.trim().split(',');
-    if(partsStr.length!==4){ alert("BBOX-Format: south,west,north,east"); return; }
-    var parts=[]; for(var i=0;i<4;i++){ var p=parseFloat(partsStr[i]); if(!isFinite(p)){ alert("BBOX ungültig"); return; } parts.push(p); }
-    var south=parts[0], west=parts[1], north=parts[2], east=parts[3];
-    baseBoundsObj={south:south, west:west, north:north, east:east}; baseBounds=L.latLngBounds([south,west],[north,east]);
+    warn('init','Init');
+    progress(0.04);
 
-    loadFeatureCollection(CUR,start,end,parts).then(function(fc){
-      var timestamps=fc.timestamps||[], nt=timestamps.length;
-      var feats=fc.features||[], cells=[];
-      for (var i=0;i<feats.length;i++){
-        var f=feats[i], geom=f && f.geometry; if(!geom) continue;
-        var vals=extractValues((f.properties||{}), nt); if(!vals) continue;
-        var agg=aggregateCell(vals);
-        var bb=bboxFromGeom(geom); cells.push({ v:agg, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
-        if((i%1500)===0) progress(i/feats.length);
-      }
-      lastCells=cells.slice(0);
-      if(!opts.silent) toast("Zellen: "+cells.length+" • "+CUR.name);
-      var rr=renderToCanvas(cells, baseBoundsObj); placeOverlayFromCanvas(rr);
-      if(opts.fit!==false) map.fitBounds(baseBounds.pad(0.1));
-    }).catch(function(err){ console.error(err); alert("Fehler beim Laden/Rendern: "+(err && err.message? err.message: err)); });
-  } catch(e){ console.error(e); alert("Fehler beim Laden/Rendern: "+(e && e.message? e.message: e)); }
-}
+    // 1) Dates
+    let start = (startEl.value||'').trim(), end=(endEl.value||'').trim();
+    if(!start || !end){ start=start14(); end=yesterday(); startEl.value=start; endEl.value=end; }
+    ok('dates',`Datum ${start}→${end}`); progress(0.1);
 
-/* ======== Buttons & Slider ======== */
-document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
-document.getElementById('dlPng').addEventListener('click', function(){
-  if(!lastCanvas){ toast("Bitte zuerst rendern"); return; }
-  var a=document.createElement('a'), start=startEl.value||'start', end=endEl.value||'end';
-  a.download=CUR.key+'_overlay_'+start+'_bis_'+end+'.png'; a.href=lastCanvas.toDataURL('image/png');
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-});
-document.getElementById('opacity').addEventListener('input', function(){ if(overlay) overlay.setOpacity(Number(this.value)/100); document.getElementById('ovv').textContent=this.value+'%'; });
-document.getElementById('showBounds').addEventListener('change', function(){ var checked=this.checked;
-  if(checked){ rect=L.rectangle(overlay? overlay._bounds: baseBounds,{color:'red',weight:1}).addTo(map); }
-  else { if(rect){ map.removeLayer(rect); rect=null; } }});
+    // 2) BBOX (parse + clamp)
+    const parts=(document.getElementById('bbox').value||'').split(',').map(Number);
+    let bbox = (parts.length===4 && parts.every(v=>isFinite(v))) ? parts : PRESETS.noe;
+    const clamped = clampBBox(bbox);
+    if (clamped.some((v,i)=>v!==bbox[i])) document.getElementById('bbox').value=clamped.join(',');
+    const [south,west,north,east]=clamped;
+    baseBoundsObj={south,west,north,east}; baseBounds=L.latLngBounds([south,west],[north,east]);
+    ok('bbox',`BBOX ok`); progress(0.18);
 
-/* ======== Dataset-Umschalter ======== */
-var dsSel=document.getElementById('datasetSel');
-dsSel.value=currentKey;
-dsSel.addEventListener('change', function(){
-  currentKey=this.value; CUR=DATASETS[currentKey]; localStorage.setItem('ovDataset', currentKey);
-  // Legendentitel sofort umstellen, Renderer bei bestehenden Daten neu zeichnen:
-  setLegendTitle(CUR.legend);
-  if(lastCells) rerenderSameData(); else renderOverlay({fit:true});
-});
+    // 3) Fetch (mit Auto-Fix Wiederholung)
+    const url=API+'?'+new URLSearchParams({parameters:PARAM,start,end,bbox:clamped.join(',')}).toString();
+    let fc = await fetch(url,{headers:{Accept:'application/json'}}).then(async r=>{
+      const txt=await r.text(); if(!r.ok) throw new Error(`HTTP ${r.status} ${txt}`); return JSON.parse(txt);
+    }).catch(async e=>{
+      // Einmaliger Retry: auf NOE fallback
+      warn('fetch','Retry mit NÖ');
+      const fallback=PRESETS.noe; document.getElementById('bbox').value=fallback.join(',');
+      const url2=API+'?'+new URLSearchParams({parameters:PARAM,start,end,bbox:fallback.join(',')}).toString();
+      return fetch(url2,{headers:{Accept:'application/json'}}).then(async r=>{
+        const txt=await r.text(); if(!r.ok) throw new Error(`HTTP ${r.status} ${txt}`); return JSON.parse(txt);
+      });
+    });
 
-/* ======== GPS / Reset ======== */
-document.getElementById('reset').addEventListener('click', function(){ if(baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
-var watchId=null, gpsMarker=null, accCircle=null, firstFix=true;
-function startWatch(){
-  if(watchId!==null) return;
-  watchId=navigator.geolocation.watchPosition(function(pos){
-    var lat=pos.coords.latitude, lon=pos.coords.longitude, acc=pos.coords.accuracy;
-    if(!gpsMarker) gpsMarker=L.marker([lat,lon]).addTo(map).bindPopup("Du bist hier");
-    gpsMarker.setLatLng([lat,lon]); if(accCircle) map.removeLayer(accCircle);
-    accCircle=L.circle([lat,lon],acc,{opacity:0.6,fillOpacity:0.08}).addTo(map);
-    if(firstFix){ map.setView([lat,lon], Math.max(map.getZoom(),12)); firstFix=false; }
-  }, function(err){
-    if(err.code===err.PERMISSION_DENIED) toast("Standort verweigert");
-    else toast("GPS-Fehler: "+err.message);
-  }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
-}
-function requestOnceThenWatch(){
-  return new Promise(function(res,rej){
-    navigator.geolocation.getCurrentPosition(function(){ res(); }, function(e){ rej(e); },
-      { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
-  }).then(function(){ startWatch(); document.getElementById('loc').textContent="📍 GPS aktiv"; toast("GPS aktiv"); })
-   .catch(function(e){ toast("GPS: "+(e && e.message? e.message: "keine Freigabe")); });
-}
-document.getElementById('loc').addEventListener('click', function(){
-  if(!('geolocation' in navigator)){ toast("Geolocation nicht verfügbar"); return; }
-  if(watchId===null) requestOnceThenWatch();
-  else { navigator.geolocation.clearWatch(watchId); watchId=null; firstFix=true;
-         if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
-         if(accCircle){ map.removeLayer(accCircle); accCircle=null; }
-         this.textContent="📍 Meine Position"; toast("GPS aus"); }
-});
+    if(!fc || fc.type!=='FeatureCollection' || !Array.isArray(fc.features)) throw new Error('Ungültige Antwort');
+    ok('fetch',`Fetch ok (${fc.features.length} features)`); progress(0.45);
 
-/* ======== Punkt-Zeitreihe ======== */
-var chartEl=document.getElementById('chartPanel'), chartTitle=document.getElementById('chartTitle');
-var chartSub=document.getElementById('chartSub'), chartMeta=document.getElementById('chartMeta');
-var closeChartBtn=document.getElementById('closeChart'), chartCanvas=document.getElementById('chartCanvas');
-var pointChart=null;
-closeChartBtn.addEventListener('click', function(){ if(pointChart){ pointChart.destroy(); pointChart=null; } chartEl.classList.remove('open'); });
-
-function kmToDegLat(km){ return km/111.0; } function kmToDegLon(km,lat){ return km/(111.320*Math.cos(lat*Math.PI/180)); }
-function buildPointBBox(lat,lon){ var halfKm=2.0, dLat=kmToDegLat(halfKm), dLon=kmToDegLon(halfKm,lat); return [lat-dLat, lon-dLon, lat+dLat, lon+dLon]; }
-function dist2Deg(lat1,lon1,lat2,lon2){ var x=(lon2-lon1)*Math.cos((lat1+lat2)*0.5*Math.PI/180), y=(lat2-lat1); return x*x+y*y; }
-function fetchPointTimeseries(ds,lat,lon,start,end){
-  var bbox=buildPointBBox(lat,lon);
-  return loadFeatureCollection(ds,start,end,bbox).then(function(fc){
-    var ts=fc.timestamps||[], feats=fc.features||[]; if(!feats.length) throw new Error("Keine Rasterzelle in der Nähe gefunden.");
-    var bestD=Infinity, bestVals=null, bestBB=null;
-    for(var i=0;i<feats.length;i++){
-      var f=feats[i], bb=bboxFromGeom(f.geometry), cx=0.5*(bb[0]+bb[2]), cy=0.5*(bb[1]+bb[3]);
-      var d2=dist2Deg(lat,lon,cy,cx), vals=extractValues(f.properties||{}, ts.length); if(!vals) continue;
-      if(d2<bestD){ bestD=d2; bestVals=vals; bestBB=bb; }
+    // 4) Cells bauen
+    const ts=fc.timestamps||[], nt=ts.length;
+    const cells=[];
+    for(const f of fc.features){ const vals=parseValues(f.properties||{}, nt); if(!vals) continue;
+      // 14-Tage Summe
+      let s=0, okv=false; for(const v of vals){ const n=Number(v); if(isFinite(n)&&n>=0){s+=n; okv=true;} }
+      if(!okv) continue;
+      const bb=bboxFromGeom(f.geometry);
+      cells.push({ v:s, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
     }
-    if(!bestVals) throw new Error("Keine Werte im nächsten Raster gefunden.");
-    return { timestamps:ts, values:bestVals, cellBBox:bestBB };
-  });
+    lastCells=cells.slice(0);
+    progress(0.62);
+
+    // 5) Render (immer etwas zeigen)
+    let out = renderCells(cells, baseBoundsObj);
+    if(out.drawn===0){
+      warn('draw','keine Pixel • Diagnose');
+      // Diagnose-Gradient
+      const widthDeg=east-west, heightDeg=north-south;
+      const PX_W=CANVAS_W, PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+      const cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H; const ctx=cvs.getContext('2d');
+      for(let y=0;y<PX_H;y++){
+        const t=y/(PX_H-1);
+        ctx.fillStyle=colorForT(t);
+        ctx.fillRect(0,y,PX_W,1);
+      }
+      out={canvas:cvs,drawn:1};
+    } else {
+      ok('draw','Render ok');
+    }
+    placeOverlay(out.canvas);
+    if(fit) map.fitBounds(baseBounds.pad(0.1));
+    progress(1);
+    ok('init','Fertig');
+  } catch(e){
+    console.error(e);
+    err('fetch','Fehler'); err('draw','Fehler');
+    // Fallback: Schachbrett, damit nie „leer“
+    const bb=(document.getElementById('bbox').value||'').split(',').map(Number);
+    const [s,w,n,e]=clampBBox(bb.length===4?bb:PRESETS.noe);
+    baseBoundsObj={south:s,west:w,north:n,east:e}; baseBounds=L.latLngBounds([s,w],[n,e]);
+    const widthDeg=e-w, heightDeg=n-s;
+    const PX_W=CANVAS_W, PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+    const cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H; const ctx=cvs.getContext('2d');
+    for(let y=0;y<PX_H;y+=32){ for(let x=0;x<PX_W;x+=32){ ctx.fillStyle=((x/32+y/32)%2===0)?'#ff0066':'#00aaff'; ctx.fillRect(x,y,32,32);} }
+    placeOverlay(cvs);
+    if(map && baseBounds) map.fitBounds(baseBounds.pad(0.1));
+  }
 }
-function openChart(lat,lon,timestamps,values){
-  var labels=timestamps.map(function(iso){ return iso.slice(0,10); });
-  var sum=0, vmin=Infinity, vmax=-Infinity;
-  var data=values.map(function(v){ var n=Number(v); if(!isFinite(n)) n=0; sum+= (CUR.key==='precip'? n:0); if(n<vmin)vmin=n; if(n>vmax)vmax=n; return n; });
 
-  if(pointChart){ pointChart.destroy(); pointChart=null; }
-  var type = CUR.chartType;
-  var dataset = { label: CUR.chartLabel, data: data, fill:false, tension:0.25, pointRadius:2, borderWidth:2 };
-  var opts = {
-    responsive:true, animation:{duration:200},
-    scales:{
-      x:{ title:{display:true,text:'Tag'}, ticks:{maxRotation:0,autoSkip:true} },
-      y:{ title:{display:true,text:CUR.unit}, beginAtZero:(CUR.key==='precip'),
-          suggestedMin: (CUR.yMin!=null? CUR.yMin: undefined),
-          suggestedMax: (CUR.yMax!=null? CUR.yMax: undefined) }
-    },
-    plugins:{ legend:{display:false},
-      tooltip:{ callbacks:{ label:function(ctx){ var v=ctx.raw??0; return (type==='bar'? v.toFixed(1)+' '+CUR.unit : v.toFixed(2)+' '+CUR.unit); } } } }
-  };
-
-  pointChart=new Chart(chartCanvas.getContext('2d'),{
-    type:type, data:{ labels:labels, datasets:[dataset] }, options:opts
-  });
-
-  chartTitle.innerHTML='<strong>'+CUR.name+' am Punkt</strong>';
-  chartSub.textContent='Punkt: '+lat.toFixed(5)+', '+lon.toFixed(5);
-  var extra = (CUR.key==='precip') ? `<span>Summe 14T: <code>${sum.toFixed(1)} ${CUR.unit}</code></span>` : '';
-  chartMeta.innerHTML=`<span>Zeitraum: <code>${labels[0]} – ${labels[labels.length-1]}</code></span>
-                       ${extra}
-                       <span>Min: <code>${isFinite(vmin)?vmin.toFixed(CUR.key==='precip'?1:2):'–'}</code></span>
-                       <span>Max: <code>${isFinite(vmax)?vmax.toFixed(CUR.key==='precip'?1:2):'–'}</code></span>`;
-  chartEl.classList.add('open');
+function rerenderSameData(){
+  if(!lastCells || !baseBoundsObj) return autoRun(false);
+  const out = renderCells(lastCells, baseBoundsObj);
+  placeOverlay(out.canvas);
 }
-map.on('click', function(e){
-  var lat=e.latlng.lat, lon=e.latlng.lng;
-  if(clickMarker) map.removeLayer(clickMarker);
-  clickMarker=L.circleMarker([lat,lon],{radius:6,color:'#111',fillColor:'#4f46e5',fillOpacity:0.9}).addTo(map);
-  toast('Lade Zeitreihe …');
-  fetchPointTimeseries(CUR,lat,lon,startEl.value,endEl.value).then(function(res){ openChart(lat,lon,res.timestamps,res.values); })
-  .catch(function(err){ console.error(err); alert("Zeitreihe fehlgeschlagen: "+(err && err.message? err.message: err)); });
+
+/*** Debug Buttons ***/
+document.getElementById('dbgPattern').addEventListener('click', ()=>{
+  const bb=(document.getElementById('bbox').value||'').split(',').map(Number);
+  const [s,w,n,e]=clampBBox(bb.length===4?bb:PRESETS.noe);
+  baseBoundsObj={south:s,west:w,north:n,east:e}; baseBounds=L.latLngBounds([s,w],[n,e]);
+  const widthDeg=e-w, heightDeg=n-s;
+  const PX_W=CANVAS_W, PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+  const cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H; const ctx=cvs.getContext('2d');
+  for(let y=0;y<PX_H;y+=32){ for(let x=0;x<PX_W;x+=32){ ctx.fillStyle=((x/32+y/32)%2===0)?'#ff0066':'#00aaff'; ctx.fillRect(x,y,32,32);} }
+  placeOverlay(cvs); map.fitBounds(baseBounds.pad(0.1));
+});
+document.getElementById('dbgCells').addEventListener('click', ()=>{
+  if(!lastCells || !baseBoundsObj) return;
+  const widthDeg=baseBoundsObj.east-baseBoundsObj.west, heightDeg=baseBoundsObj.north-baseBoundsObj.south;
+  const PX_W=CANVAS_W, PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
+  const cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H; const ctx=cvs.getContext('2d'); const lonPerPx=widthDeg/PX_W, latPerPx=heightDeg/PX_H;
+  let i=0; for(const c of lastCells){
+    const cx=0.5*(c.minx+c.maxx), cy=0.5*(c.miny+c.maxy);
+    const cxpx=(cx-baseBoundsObj.west)/lonPerPx, cypx=(baseBoundsObj.north-cy)/latPerPx;
+    const hue=(i*47)%360; // hübsch bunt
+    const col=hslToRgb(hue,0.9,0.55); ctx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+    ctx.fillRect(Math.floor(cxpx-4), Math.floor(cypx-4), 8, 8); i++;
+  }
+  placeOverlay(cvs);
 });
 
-/* ======== Live-Listener für Tile & Justage ======== */
-(function(){
-  applyTileFilter(); applyBlend();
-  bindBlendRef(); bindTileFilterRef();
-
-  let debounce;
-  function rerenderDebounced(){ clearTimeout(debounce); debounce=setTimeout(function(){ if(lastCells) rerenderSameData(); else renderOverlay({fit:false,silent:true}); }, 120); }
-
-  document.getElementById('tileX').addEventListener('input', function(){
-    state.tileScaleX = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleX', String(state.tileScaleX)); rerenderDebounced();
-  });
-  document.getElementById('tileY').addEventListener('input', function(){
-    state.tileScaleY = Number(this.value)/100; updateUI(); localStorage.setItem('ovTileScaleY', String(state.tileScaleY)); rerenderDebounced();
-  });
-
-  document.getElementById('left').addEventListener('click',  ()=>{ state.shiftX -= 1; persist(); });
-  document.getElementById('right').addEventListener('click', ()=>{ state.shiftX += 1; persist(); });
-  document.getElementById('up').addEventListener('click',    ()=>{ state.shiftY += 1; persist(); });
-  document.getElementById('down').addEventListener('click',  ()=>{ state.shiftY -= 1; persist(); });
-
-  document.getElementById('wMinus').addEventListener('click', ()=>{ state.scaleW -= 0.5; persist(); });
-  document.getElementById('wPlus').addEventListener('click',  ()=>{ state.scaleW += 0.5; persist(); });
-  document.getElementById('hMinus').addEventListener('click', ()=>{ state.scaleH -= 0.5; persist(); });
-  document.getElementById('hPlus').addEventListener('click',  ()=>{ state.scaleH += 0.5; persist(); });
-
-  document.getElementById('resetTuning').addEventListener('click', ()=>{
-    ['ovTileScaleX','ovTileScaleY','ovShiftX','ovShiftY','ovScaleW','ovScaleH','ovBlendMode','ovTileFilter','ovDataset'].forEach(localStorage.removeItem.bind(localStorage));
-    state.tileScaleX=2; state.tileScaleY=2; state.shiftX=0; state.shiftY=0; state.scaleW=0; state.scaleH=0;
-    blendMode='overlay'; tileFilter='none'; currentKey='precip'; CUR=DATASETS[currentKey]; dsSel.value=currentKey;
-    applyBlend(); applyTileFilter(); setLegendTitle(CUR.legend);
-    updateUI(); if(lastCells) rerenderSameData(); if(overlay) applyTransformOnOverlay(overlay, baseBoundsObj);
-    toast('Justage & Anzeige zurückgesetzt');
-  });
-})();
-
-/* ======== Auto-Render ======== */
-window.addEventListener('load', function(){ setTimeout(function(){ setLegendTitle(CUR.legend); renderOverlay({fit:true, silent:true}); }, 150); });
+/*** Auto-Start ***/
+window.addEventListener('load', ()=> {
+  warn('init','Init'); warn('bbox','BBOX'); warn('dates','Datum'); warn('fetch','Fetch'); warn('draw','Render');
+  setTimeout(()=> autoRun(true), 120);
+});
 </script>
 </body>
 </html>
