@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no"/>
-<title>14-Tage-Niederschlag • NÖ & STMK (Client)</title>
+<title>14-Tage Wetterdaten • NÖ & STMK (Client)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3"></script>
 <style>
@@ -11,12 +11,16 @@
   html,body,#map{height:100%;margin:0}
   #map{background:#eef2f7}
 
+  :root {
+    --safe-area-bottom: 100px; /* Generous safe area to avoid overlap with external UI */
+  }
+
   /* Drawer (Einstellungs-Panel) */
   #drawer{
     position:fixed; z-index:5000;
     top:calc(env(safe-area-inset-top,0) + 60px);
     right:calc(env(safe-area-inset-right,0) + 12px);
-    width:min(380px,94vw); max-height:72vh; overflow:auto;
+    width:min(380px,94vw); max-height:80vh; overflow:auto;
     background:#fff; border:1px solid #e5e5e5; border-radius:12px;
     box-shadow:0 8px 24px rgba(0,0,0,.18);
     transform:translateX(110%); transition:transform .22s ease-out;
@@ -43,14 +47,18 @@
 
   /* Chart-Panel */
   #chartPanel{
-    position:fixed; left:50%; bottom:12px; transform:translateX(-50%);
+    position:fixed; left:50%; bottom:var(--safe-area-bottom); transform:translateX(-50%);
     width:min(680px,96vw); background:#fff; border:1px solid #e5e5e5; border-radius:12px;
     box-shadow:0 12px 28px rgba(0,0,0,.18); z-index:5000; display:none;
     font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px;
   }
   #chartPanel.open{display:block}
   #chartHead{ display:flex; align-items:center; justify-content:space-between; padding:10px 12px; border-bottom:1px solid #eee; }
-  #chartBody{ padding:8px 12px 12px 12px; }
+  #chartBody{ 
+    padding:8px 12px 12px 12px; 
+    position: relative; 
+    height: 280px; 
+  }
   #chartMeta{ font-size:12px; opacity:.7; display:flex; gap:14px; flex-wrap:wrap; margin-top:6px; }
   #closeChart{ border:1px solid #ddd; border-radius:8px; background:#fafafa; padding:6px 10px; }
 
@@ -58,6 +66,7 @@
   .leaflet-control.legend {
     background:#fff; padding:8px; border-radius:10px; border:1px solid #e5e5e5;
     box-shadow:0 2px 8px rgba(0,0,0,.12); font-family:system-ui,-apple-system,Segoe UI,Roboto;
+    margin-bottom: var(--safe-area-bottom); /* Anheben, um Überlappung zu vermeiden */
   }
   #legendCanvas{ display:block; width:240px; height:12px; image-rendering:pixelated; }
   .legend-row{ display:flex; justify-content:space-between; margin-top:4px; font-size:12px; }
@@ -76,6 +85,23 @@
     display:grid; place-items:center; font-size:18px; line-height:1;
     box-shadow:0 2px 8px rgba(0,0,0,.12);
   }
+
+  /* Overlay PNG */
+  .leaflet-image-layer.rain { image-rendering: pixelated; }
+
+  /* Log UI */
+  #logToggle{
+    position:fixed; left:12px; bottom:var(--safe-area-bottom); z-index:6000; border:1px solid #e5e5e5; border-radius:10px; background:#fff; padding:6px 10px;
+    font-family:system-ui,-apple-system,Segoe UI,Roboto; font-size:14px; box-shadow:0 2px 8px rgba(0,0,0,.12); cursor:pointer;
+  }
+  #logPanel{
+    position:fixed; left:12px; bottom:calc(var(--safe-area-bottom) + 44px); z-index:6000; width:min(520px,94vw); max-height:50vh; overflow:auto;
+    background:#fff; border:1px solid #e5e5e5; border-radius:12px; box-shadow:0 12px 24px rgba(0,0,0,.18); display:none;
+    font-family:ui-monospace,Menlo,Consolas,monospace; font-size:12px;
+  }
+  #logPanel.open{ display:block; }
+  #logPanel .head{ display:flex; gap:8px; align-items:center; justify-content:space-between; padding:8px 10px; border-bottom:1px solid #eee; }
+  #logPanel .body{ padding:8px 10px; white-space:pre-wrap; }
 </style>
 </head>
 <body>
@@ -85,11 +111,25 @@
   <div id="drawer" aria-hidden="true">
     <div class="row" style="justify-content:space-between; width:100%">
       <div>
-        <div><strong>Overlay aus API rendern (Client)</strong></div>
-        <div class="hint">SPARTACUS v2 RR • GeoSphere Dataset-API</div>
+        <div><strong>Overlay-Steuerung</strong></div>
+        <div class="hint">GeoSphere API</div>
       </div>
       <button class="kb" id="renderBtn">Laden &amp; Rendern</button>
     </div>
+    
+    <div style="margin:6px 0;border-top:1px solid #eee"></div>
+
+    <div class="row">
+      <label>Parameter:&nbsp;
+        <select id="paramSelect">
+          <option value="RR">Niederschlagssumme</option>
+          <option value="TX">Temperaturmittel (Tmax)</option>
+          <option value="SM">Bodenfeuchte (Modell)</option>
+        </select>
+      </label>
+    </div>
+
+    <p class="hint" id="paramHint">14-Tage-Summe des Niederschlags.</p>
 
     <!-- Presets -->
     <div class="row">
@@ -99,7 +139,6 @@
           <option value="stmk">Steiermark</option>
         </select>
       </label>
-      <button class="kb" id="applyPreset">Übernehmen</button>
     </div>
 
     <div class="row">
@@ -125,58 +164,55 @@
       <button class="kb" id="dlPng">PNG speichern</button>
     </div>
 
-    <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row"><strong>Manuelle Justierung</strong> <span class="hint">(persistiert lokal)</span></div>
-
-    <div class="row">
-      <small>Shift X:</small>
-      <button class="kb" id="left">←</button>
-      <div><code id="pxX">0</code>&nbsp;px</div>
-      <button class="kb" id="right">→</button>
-    </div>
-
-    <div class="row">
-      <small>Shift Y:</small>
-      <button class="kb" id="up">↑</button>
-      <div><code id="pxY">0</code>&nbsp;px</div>
-      <button class="kb" id="down">↓</button>
-      <small class="hint">(↑ = nach Norden)</small>
-    </div>
-
-    <div class="row">
-      <small>Breite (W):</small>
-      <button class="kb" id="wMinus">W−</button>
-      <div><code id="wPct">0.0</code>&nbsp;%</div>
-      <button class="kb" id="wPlus">W+</button>
-    </div>
-
-    <div class="row">
-      <small>Höhe (H):</small>
-      <button class="kb" id="hMinus">H−</button>
-      <div><code id="hPct">0.0</code>&nbsp;%</div>
-      <button class="kb" id="hPlus">H+</button>
-    </div>
-
-    <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live)</span></div>
-    <div class="row">
-      <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="200"> <span id="tileXVal">200%</span></label>
-      <code id="tileXpx">– px</code>
-    </div>
-    <div class="row">
-      <label>Y: <input type="range" id="tileY" min="200" max="600" step="5" value="200"> <span id="tileYVal">200%</span></label>
-      <code id="tileYpx">– px</code>
-    </div>
-
-    <div style="margin:6px 0;border-top:1px solid #eee"></div>
-    <div class="row">
-      <label>Palette:&nbsp;
-        <select id="palette">
-          <option value="spectral">Spectral (mehrfarbig)</option>
-          <option value="rainbow">Rainbow (HSV)</option>
-          <option value="viridis">Viridis (grün–blau)</option>
-        </select>
-      </label>
+    <div>
+      <div style="margin:6px 0;border-top:1px solid #eee"></div>
+      <div class="row"><strong>Manuelle Justierung</strong> <span class="hint">(persistiert lokal)</span></div>
+      <div class="row">
+        <small>Shift X:</small>
+        <button class="kb" id="left">←</button>
+        <div><code id="pxX">0</code>&nbsp;px</div>
+        <button class="kb" id="right">→</button>
+      </div>
+      <div class="row">
+        <small>Shift Y:</small>
+        <button class="kb" id="up">↑</button>
+        <div><code id="pxY">0</code>&nbsp;px</div>
+        <button class="kb" id="down">↓</button>
+        <small class="hint">(↑ = nach Norden)</small>
+      </div>
+      <div class="row">
+        <small>Breite (W):</small>
+        <button class="kb" id="wMinus">W−</button>
+        <div><code id="wPct">0.0</code>&nbsp;%</div>
+        <button class="kb" id="wPlus">W+</button>
+      </div>
+      <div class="row">
+        <small>Höhe (H):</small>
+        <button class="kb" id="hMinus">H−</button>
+        <div><code id="hPct">0.0</code>&nbsp;%</div>
+        <button class="kb" id="hPlus">H+</button>
+      </div>
+      <div style="margin:6px 0;border-top:1px solid #eee"></div>
+      <div class="row"><strong>Kachelgröße (px)</strong> <span class="hint">(live)</span></div>
+      <div class="row">
+        <label>X: <input type="range" id="tileX" min="200" max="600" step="5" value="600"> <span id="tileXVal">600%</span></label>
+        <code id="tileXpx">– px</code>
+      </div>
+      <div class="row">
+        <label>Y: <input type="range" id="tileY" min="200" max="600" step="5" value="280"> <span id="tileYVal">280%</span></label>
+        <code id="tileYpx">– px</code>
+      </div>
+      <div style="margin:6px 0;border-top:1px solid #eee"></div>
+      <div class="row">
+        <label>Palette:&nbsp;
+          <select id="palette">
+            <option value="spectral">Spectral (Temp./Niederschl.)</option>
+            <option value="soil">Bodenfeuchte (braun-blau)</option>
+            <option value="rainbow">Rainbow (HSV)</option>
+            <option value="viridis">Viridis (grün–blau)</option>
+          </select>
+        </label>
+      </div>
     </div>
   </div>
 
@@ -184,416 +220,755 @@
   <div id="chartPanel" role="dialog" aria-modal="true" aria-labelledby="chartTitle">
     <div id="chartHead">
       <div>
-        <div id="chartTitle"><strong>14-Tage-Summe (RR) am Punkt</strong></div>
+        <div id="chartTitle"><strong>14-Tage-Werte am Punkt</strong></div>
         <div id="chartSub" class="hint"></div>
       </div>
       <button id="closeChart">Schließen</button>
     </div>
     <div id="chartBody">
-      <canvas id="chartCanvas" height="160"></canvas>
+      <canvas id="chartCanvas"></canvas>
       <div id="chartMeta"></div>
     </div>
   </div>
 
   <div id="toast"></div>
+  <button id="logToggle">🧾 Log</button>
+  <div id="logPanel" aria-live="polite">
+    <div class="head"><strong>Log</strong><span id="logCount" class="hint">0 Einträge</span>
+      <div><button id="logCopy" class="kb">Kopieren</button> <button class="kb" id="logClear">Leeren</button></div>
+    </div>
+    <div class="body" id="logBody"></div>
+  </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
 <script>
-/* ======== Konfig ======== */
-var DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
-var PARAM = "RR";
-var CANVAS_W = 1536;
+/*
+ * Mini-Logbuch für Debugging-Zwecke
+ */
+const Log = (() => {
+  const body = document.getElementById('logBody');
+  const cnt = document.getElementById('logCount');
+  const storeKey = '__wetterkarte_log';
+  let entries = [];
 
-// Presets
-var PRESETS = {
-  noe: { name:"Niederösterreich", bbox:[47.419564822,14.450844322,49.024548178,17.075640678], center:[48.30,15.75] },
-  stmk:{ name:"Steiermark",       bbox:[46.35,13.55,47.75,16.51],                    center:[47.25,15.25] }
+  function render(e) {
+    const line = document.createElement('div');
+    line.textContent = `[${e.ts}] ${e.level} ${e.msg}${e.ctx ? ' ' + e.ctx : ''}`;
+    body.appendChild(line);
+    body.scrollTop = body.scrollHeight;
+    cnt.textContent = `${entries.length} Einträge`;
+  }
+
+  function push(level, msg, ctx) {
+    const e = { ts: new Date().toISOString(), level, msg, ctx: typeof ctx === 'string' ? ctx : JSON.stringify(ctx || '') };
+    entries.push(e);
+    render(e);
+    try { localStorage.setItem(storeKey, JSON.stringify(entries)); } catch (e) { /* ignore */ }
+  }
+
+  function clear() {
+    entries = [];
+    body.innerHTML = '';
+    cnt.textContent = '0 Einträge';
+    localStorage.removeItem(storeKey);
+  }
+
+  function load() {
+    try {
+      const raw = localStorage.getItem(storeKey);
+      if (raw) {
+        entries = JSON.parse(raw) || [];
+        body.innerHTML = '';
+        entries.forEach(render);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  
+  return { info: (m, c) => push('INFO', m, c), warn: (m, c) => push('WARN', m, c), error: (m, c) => push('ERROR', m, c), clear, load };
+})();
+Log.load();
+document.getElementById('logToggle').onclick = () => document.getElementById('logPanel').classList.toggle('open');
+document.getElementById('logCopy').onclick = async () => { try { await navigator.clipboard.writeText(document.getElementById('logBody').innerText); Log.info('log:copied'); } catch (e) { Log.warn('log:copy-failed', String(e)); } };
+document.getElementById('logClear').onclick = () => Log.clear();
+
+/*
+ * Abfangen von fetch-Aufrufen für das Logging
+ */
+const _fetch = window.fetch.bind(window);
+window.fetch = async (input, init) => {
+  const url = typeof input === 'string' ? input : (input && input.url) || String(input);
+  const t0 = performance.now();
+  Log.info('fetch:start', url);
+  try {
+    const res = await _fetch(input, init);
+    const ms = Math.round(performance.now() - t0);
+    let text = '';
+    try { text = (await res.clone().text()).slice(0, 600); } catch (e) { /* ignore */ }
+    Log.info('fetch:done', `${res.status} ${ms}ms ${url}\n${text}`);
+    return res;
+  } catch (err) {
+    Log.error('fetch:fail', `${url} :: ${err && err.message ? err.message : err}`);
+    throw err;
+  }
 };
 
-/* ======== Map ======== */
-function toast(msg){ var el=document.getElementById('toast'); el.textContent=msg; el.style.display='block';
-  clearTimeout(el._t); el._t=setTimeout(function(){ el.style.display='none'; },2200); }
-var map = L.map('map', { zoomControl:false }); // Zoom-Buttons aus
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19, attribution:'&copy; OpenStreetMap'}).addTo(map);
+/*
+ * Globale Konfiguration
+ */
+const DATASET_URL = "https://dataset.api.hub.geosphere.at/v1/grid/historical/spartacus-v2-1d-1km";
+const CANVAS_W = 1536;
 
-/* ======== Leaflet-Controls: Links oben (2 Buttons) ======== */
-var LeftControl = L.Control.extend({
-  options:{ position:'topleft' },
-  onAdd:function(){
-    var container = L.DomUtil.create('div','leaflet-control custom');
-    var btnLoc = L.DomUtil.create('button','btn',container); btnLoc.id='loc'; btnLoc.textContent='📍 Meine Position';
-    var btnReset = L.DomUtil.create('button','btn',container); btnReset.id='reset'; btnReset.textContent='↺ Ansicht/Reset';
+const PARAMS = {
+  'RR': { api: 'RR', name: 'Niederschlagssumme', unit: 'mm', calc: 'sum', hint: '14-Tage-Summe des Niederschlags.' },
+  'TX': { api: 'TX', name: 'Temperaturmittel (Tmax)', unit: '°C', calc: 'avg', hint: '14-Tage-Mittel der Tageshöchsttemperatur.' },
+  'SM': { api: ['RR', 'TX'], name: 'Bodenfeuchte (Modell)', unit: '%', calc: 'model', hint: 'Modellierter Bodenfeuchte-Index basierend auf Niederschlag und Temperatur.'}
+};
+let currentParam = 'RR';
+
+const PRESETS = {
+  noe: { name: "Niederösterreich", bbox: [47.419564822, 14.450844322, 49.024548178, 17.075640678], center: [48.30, 15.75] },
+  stmk: { name: "Steiermark", bbox: [46.35, 13.55, 47.75, 16.51], center: [47.25, 15.25] }
+};
+
+/*
+ * Leaflet-Karteninitialisierung
+ */
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => { el.style.display = 'none'; }, 2200);
+}
+
+const map = L.map('map', { zoomControl: false });
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+map.setView([47.3, 15.3], 7);
+
+/*
+ * Eigene Leaflet-Controls
+ */
+const LeftControl = L.Control.extend({
+  options: { position: 'topleft' },
+  onAdd: function () {
+    const container = L.DomUtil.create('div', 'leaflet-control custom');
+    const btnLoc = L.DomUtil.create('button', 'btn', container);
+    btnLoc.id = 'loc';
+    btnLoc.textContent = '📍 Meine Position';
+    const btnReset = L.DomUtil.create('button', 'btn', container);
+    btnReset.id = 'reset';
+    btnReset.textContent = '↺ Ansicht/Reset';
     L.DomEvent.disableClickPropagation(container);
     return container;
   }
 });
 map.addControl(new LeftControl());
 
-/* ======== Leaflet-Controls: Rechts oben (Zahnrad) ======== */
-var GearControl = L.Control.extend({
-  options:{ position:'topright' },
-  onAdd:function(){
-    var btn = L.DomUtil.create('button','gear-btn leaflet-control custom'); btn.id='fab'; btn.title='Einstellungen'; btn.textContent='⚙️';
+const GearControl = L.Control.extend({
+  options: { position: 'topright' },
+  onAdd: function () {
+    const btn = L.DomUtil.create('button', 'gear-btn leaflet-control custom');
+    btn.id = 'fab';
+    btn.title = 'Einstellungen';
+    btn.textContent = '⚙️';
     L.DomEvent.disableClickPropagation(btn);
     return btn;
   }
 });
 map.addControl(new GearControl());
 
-/* ======== Drawer Toggle ======== */
-var fab=document.getElementById('fab'), drawer=document.getElementById('drawer');
-function toggleDrawer(){ var open=!drawer.classList.contains('open'); drawer.classList.toggle('open',open); drawer.setAttribute('aria-hidden', String(!open)); }
-fab.addEventListener('click', toggleDrawer);
+/*
+ * UI-Interaktionen und State-Management
+ */
+const fab = document.getElementById('fab');
+const drawer = document.getElementById('drawer');
+fab.addEventListener('click', () => {
+    const open = !drawer.classList.contains('open');
+    drawer.classList.toggle('open', open);
+    drawer.setAttribute('aria-hidden', String(!open));
+});
 
-/* ======== Datum: letzte 14 Tage ======== */
-var startEl=document.getElementById('start'), endEl=document.getElementById('end');
-(function(){
-  var today=new Date(), end=new Date(today.getFullYear(), today.getMonth(), today.getDate()-1), start=new Date(end); start.setDate(end.getDate()-13);
-  function fmt(d){ return d.toISOString().slice(0,10); }
-  startEl.value=fmt(start); endEl.value=fmt(end);
+const startEl = document.getElementById('start');
+const endEl = document.getElementById('end');
+(() => {
+  const today = new Date();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const start = new Date(end);
+  start.setDate(end.getDate() - 13);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  startEl.value = fmt(start);
+  endEl.value = fmt(end);
 })();
 
-/* ======== States ======== */
-var overlay=null, rect=null, baseBounds=null, baseBoundsObj=null;
-var lastCanvas=null, lastCells=null, lastStepPx=null, clickMarker=null;
+let overlay = null, rect = null, baseBounds = null, baseBoundsObj = null;
+let lastCanvas = null, lastCells = null, lastStepPx = null, clickMarker = null;
+const bar = document.getElementById('bar');
+const pct = document.getElementById('pct');
 
-/* ======== Progress ======== */
-var bar=document.getElementById('bar'), pct=document.getElementById('pct');
-function progress(frac){ var p=Math.max(0,Math.min(1,frac||0)); bar.style.width=(Math.round(p*100))+'%'; pct.textContent=(Math.round(p*100))+'%'; }
+const paletteSel = document.getElementById('palette');
+let currentPalette = localStorage.getItem('ovPalette') || 'spectral';
+paletteSel.value = currentPalette;
 
-/* ======== Paletten ======== */
-var paletteSel=document.getElementById('palette');
-var currentPalette=localStorage.getItem('ovPalette')||'spectral';
-paletteSel.value=currentPalette;
-paletteSel.addEventListener('change', function(){ currentPalette=this.value; localStorage.setItem('ovPalette', currentPalette); if(lastCells){ rerenderSameData(); } });
-function hex2rgb(h){ h=h.replace('#',''); return [parseInt(h.slice(0,2),16),parseInt(h.slice(2,4),16),parseInt(h.slice(4,6),16)]; }
-function lerp(a,b,t){ return a+(b-a)*t; } function lerpColor(c1,c2,t){ return [Math.round(lerp(c1[0],c2[0],t)),Math.round(lerp(c1[1],c2[1],t))]; }
-function hslToRgb(h,s,l){ h=((h%360)+360)%360; s=Math.max(0,Math.min(1,s)); l=Math.max(0,Math.min(1,l)); var c=(1-Math.abs(2*l-1))*s, hp=h/60, x=c*(1-Math.abs(hp%2-1)), r=0,g=0,b=0;
-  if(hp<1){r=c;g=x;} else if(hp<2){r=x;g=c;} else if(hp<3){g=c;b=x;} else if(hp<4){g=x;b=c;} else if(hp<5){r=x;b=c;} else {r=c;b=x;} var m=l-c/2; return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];}
-function getStops(name){
-  if(name==='viridis'){ return [{t:0.00,c:[68,1,84]},{t:0.07,c:[72,30,110]},{t:0.14,c:[64,67,135]},{t:0.21,c:[55,90,140]},
-                          {t:0.28,c:[45,115,142]},{t:0.35,c:[37,137,141]},{t:0.42,c:[31,159,136]},{t:0.50,c:[43,183,122]},
-                          {t:0.58,c:[84,199,101]},{t:0.66,c:[129,211,78]},{t:0.74,c:[173,220,52]},{t:0.82,c:[212,225,33]},
-                          {t:0.90,c:[238,229,27]},{t:0.96,c:[247,229,32]},{t:1.00,c:[253,231,37]}]; }
-  if(name==='spectral'){ var cols=['#9e0142','#d53e4f','#f46d43','#fdae61','#fee08b','#ffffbf','#e6f598','#abdda4','#66c2a5','#3288bd','#5e4fa2'];
-                         var s=[]; for(var i=0;i<cols.length;i++){ s.push({t:i/(cols.length-1), c:hex2rgb(cols[i])}); } return s; }
-  if(name==='rainbow'){ var N=9, s=[]; for(var i=0;i<N;i++){ var t=i/(N-1), hue=260+(-280*t); s.push({t:t, c:hslToRgb(hue,1.0,0.52)}); } return s; }
-  return getStops('spectral');
-}
-var STOPS=getStops(currentPalette), PALETTE=null;
-function colorFromStops(t){ t=Math.max(0,Math.min(1,t)); var i=0; while(i<STOPS.length-1 && t>STOPS[i+1].t) i++; var a=STOPS[i], b=STOPS[i+1], local=(t-a.t)/(b.t-a.t+1e-12);
-  return lerpColor(a.c,b.c,local); }
-function buildPalette(name,n){ STOPS=getStops(name); var arr=new Array(n); for(var i=0;i<n;i++){ var t=i/(n-1); arr[i]=colorFromStops(t);} return arr; }
-function colorFor(v,vmin,vmax){ if(!isFinite(v)) return [0,0,0,0]; var t=(v-vmin)/(vmax-vmin+1e-12); t=Math.max(0,Math.min(1,t));
-  var c=PALETTE && PALETTE.length ? PALETTE[Math.round(t*(PALETTE.length-1))] : colorFromStops(t); return [c[0],c[1],c[2],255]; }
-var legendCtrl=L.control({position:'bottomright'});
-legendCtrl.onAdd=function(map){ var div=L.DomUtil.create('div','leaflet-control legend');
-  div.innerHTML='<div style="font-weight:600;margin-bottom:4px">RR (mm)</div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>';
-  L.DomEvent.disableClickPropagation(div); return div; }; legendCtrl.addTo(map);
-function updateLegend(vmin,vmax){ var c=document.getElementById('legendCanvas'); if(!c) return; var ctx=c.getContext('2d'), w=c.width, h=c.height, img=ctx.createImageData(w,h);
-  for(var x=0;x<w;x++){ var t=x/(w-1); var col=PALETTE && PALETTE.length? PALETTE[Math.round(t*(PALETTE.length-1))]:colorFromStops(t);
-    for(var y=0;y<h;y++){ var i=(y*w+x)*4; img.data[i]=col[0]; img.data[i+1]=col[1]; img.data[i+2]=col[2]; img.data[i+3]=255; } }
-  ctx.putImageData(img,0,0); var vminEl=document.getElementById('vminLabel'), vmaxEl=document.getElementById('vmaxLabel');
-  if(vminEl) vminEl.textContent=vmin.toFixed(1)+' mm'; if(vmaxEl) vmaxEl.textContent=vmax.toFixed(1)+' mm'; }
+const paramSelectEl = document.getElementById('paramSelect');
 
-/* ======== Stats ======== */
-function quantile(sorted,q){ if(!sorted.length) return NaN; var pos=(sorted.length-1)*q, base=Math.floor(pos), rest=pos-base;
-  if(sorted[base+1]!==undefined) return sorted[base]+rest*(sorted[base+1]-sorted[base]); return sorted[base]; }
-function robustRange(vals){ var a=[]; for(var i=0;i<vals.length;i++) if(isFinite(vals[i])) a.push(vals[i]); if(!a.length) return {vmin:0,vmax:1};
-  a.sort(function(x,y){return x-y;}); var v2=quantile(a,0.02), v98=quantile(a,0.98); if(!isFinite(v2)||!isFinite(v98)||v98<=v2){ v2=a[0]; v98=a[a.length-1]; }
-  if(v98<=v2) v98=v2+1e-6; return {vmin:v2, vmax:v98}; }
-
-/* ======== API ======== */
-function loadFeatureCollection(start,end,bbox){
-  var params=new URLSearchParams({ parameters:PARAM, start:start, end:end, bbox:bbox.join(',') });
-  return fetch(DATASET_URL+"?"+params.toString(), { headers:{ "Accept":"application/json" } })
-    .then(function(r){ if(!r.ok) return r.text().then(function(t){ throw new Error("HTTP "+r.status+" "+t); }); return r.json(); })
-    .then(function(fc){ if(!fc || fc.type!=="FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten."); return fc; });
-}
-function extractValues(props,nt){
-  var prefer=[PARAM,String(PARAM).toLowerCase(),"RRsum","rr_sum","value","values"];
-  for(var i=0;i<prefer.length;i++){ var v=props[prefer[i]];
-    if(Array.isArray(v) && v.length>0){ var out=[]; for(var j=0;j<v.length;j++){ var x=v[j]; if(typeof x==='number' && isFinite(x)) out.push(Number(x)); } if(out.length>0) return out; } }
-  var keys=Object.keys(props);
-  for(var k=0;k<keys.length;k++){ var v2=props[keys[k]];
-    if(Array.isArray(v2) && (nt? v2.length===nt : v2.length>0)){ var out2=[]; for(var j2=0;j2<v2.length;j2++){ var y=v2[j2]; if(typeof y==='number' && isFinite(y)) out2.push(Number(y)); } if(out2.length>0) return out2; } }
-  var found=null; (function scan(o){ if(found) return;
-    if(Array.isArray(o)){ if(o.length>0){ var num=false; for(var q=0;q<o.length;q++){ if(typeof o[q]==='number' && isFinite(o[q])){ num=true; break; } }
-      if(num){ found=o.map(function(z){ return Number(z); }); return; } }
-      for(var q2=0;q2<o.length;q2++) scan(o[q2]);
-    } else if(o && typeof o==='object'){ var ks=Object.keys(o); for(var m=0;m<ks.length;m++) scan(o[ks[m]]); } })(props);
-  return found;
-}
-function bboxFromGeom(geom){
-  var coords=geom && geom.coordinates; var minx=Infinity,miny=Infinity,maxx=-Infinity,maxy=-Infinity;
-  (function walk(node){ if(!node) return; if(Array.isArray(node)){
-    if(node.length>=2 && typeof node[0]==='number' && typeof node[1]==='number'){ var x=node[0], y=node[1];
-      if(x<minx)minx=x; if(x>maxx)maxx=x; if(y<miny)miny=y; if(y>maxy)maxy=y; }
-    else { for (var i=0;i<node.length;i++) walk(node[i]); } } })(coords);
-  return [minx,miny,maxx,maxy];
-}
-
-/* ======== Rastergröße schätzen ======== */
-function medianFrom(arr){ var a=[]; for(var i=0;i<arr.length;i++) if(isFinite(arr[i])) a.push(arr[i]);
-  if(!a.length) return NaN; a.sort(function(x,y){return x-y;}); var mid=0.5*(a.length-1), lo=Math.floor(mid), hi=Math.ceil(mid); return a[lo]+(mid-lo)*(a[hi]-a[lo]); }
-function estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,pxW,pxH){
-  var wpx=[],hpx=[],cx=[],cy=[];
-  for(var i=0;i<cells.length;i++){
-    var cw=(cells[i].maxx-cells[i].minx)/lonPerPx, ch=(cells[i].maxy-cells[i].miny)/latPerPx;
-    if(cw>0) wpx.push(cw); if(ch>0) hpx.push(ch);
-    var cx_deg=0.5*(cells[i].minx+cells[i].maxx), cy_deg=0.5*(cells[i].miny+cells[i].maxy);
-    cx.push((cx_deg-bounds.west)/lonPerPx); cy.push((bounds.north-cy_deg)/latPerPx);
-  }
-  var dx=medianFrom(wpx), dy=medianFrom(hpx);
-  if(!isFinite(dx)||dx<=0){ cx.sort(function(a,b){return a-b;}); var difX=[]; for(var i2=1;i2<cx.length;i2++){ var d=cx[i2]-cx[i2-1]; if(d>0.25) difX.push(d);} dx=medianFrom(difX); }
-  if(!isFinite(dy)||dy<=0){ cy.sort(function(a,b){return a-b;}); var difY=[]; for(var j=1;j<cy.length;j++){ var d2=cy[j]-cy[j-1]; if(d2>0.25) difY.push(d2);} dy=medianFrom(difY); }
-  if(!isFinite(dx)||dx<=0||!isFinite(dy)||dy<=0){
-    var N=Math.max(1,cells.length), AR=pxW/pxH;
-    if(!isFinite(dx)||dx<=0) dx=pxW/Math.sqrt(N*AR);
-    if(!isFinite(dy)||dy<=0) dy=pxH/Math.sqrt(N/AR);
-  }
-  return { dx:Math.max(1,dx*1.05), dy:Math.max(1,dy*1.05) };
-}
-
-/* ======== Justage / Tile ======== */
-var state={
-  shiftX:Number(localStorage.getItem('ovShiftX')||0)||0,
-  shiftY:Number(localStorage.getItem('ovShiftY')||0)||0,
-  scaleW:Number(localStorage.getItem('ovScaleW')||0)||0,
-  scaleH:Number(localStorage.getItem('ovScaleH')||0)||0,
-  tileScaleX:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleX')||2)||2)),
-  tileScaleY:Math.min(6,Math.max(2,Number(localStorage.getItem('ovTileScaleY')||2)||2)),
+const state = {
+  shiftX: Number(localStorage.getItem('ovShiftX') || 0) || 0,
+  shiftY: Number(localStorage.getItem('ovShiftY') || 0) || 0,
+  scaleW: Number(localStorage.getItem('ovScaleW') || 0) || 0,
+  scaleH: Number(localStorage.getItem('ovScaleH') || 0) || 0,
+  tileScaleX: Math.min(6, Math.max(2, Number(localStorage.getItem('ovTileScaleX') || 6) || 6)),
+  tileScaleY: Math.min(6, Math.max(2, Number(localStorage.getItem('ovTileScaleY') || 2.8) || 2.8)),
 };
-var pxX, pxY, wPct, hPct, tileX, tileY, tileXVal, tileYVal, tileXpx, tileYpx;
-function bindUIRefs(){
-  pxX=document.getElementById('pxX'); pxY=document.getElementById('pxY');
-  wPct=document.getElementById('wPct'); hPct=document.getElementById('hPct');
-  tileX=document.getElementById('tileX'); tileY=document.getElementById('tileY');
-  tileXVal=document.getElementById('tileXVal'); tileYVal=document.getElementById('tileYVal');
-  tileXpx=document.getElementById('tileXpx'); tileYpx=document.getElementById('tileYpx');
+
+let pxX, pxY, wPct, hPct, tileX, tileY, tileXVal, tileYVal, tileXpx, tileYpx;
+function bindUIRefs() {
+  pxX = document.getElementById('pxX'); pxY = document.getElementById('pxY');
+  wPct = document.getElementById('wPct'); hPct = document.getElementById('hPct');
+  tileX = document.getElementById('tileX'); tileY = document.getElementById('tileY');
+  tileXVal = document.getElementById('tileXVal'); tileYVal = document.getElementById('tileYVal');
+  tileXpx = document.getElementById('tileXpx'); tileYpx = document.getElementById('tileYpx');
 }
 bindUIRefs();
-function updateUI(){
-  state.tileScaleX=Math.min(6,Math.max(2,state.tileScaleX));
-  state.tileScaleY=Math.min(6,Math.max(2,state.tileScaleY));
-  pxX.textContent=state.shiftX; pxY.textContent=state.shiftY;
-  wPct.textContent=state.scaleW.toFixed(1); hPct.textContent=state.scaleH.toFixed(1);
-  tileX.value=String(Math.round(state.tileScaleX*100)); tileY.value=String(Math.round(state.tileScaleY*100));
-  tileXVal.textContent=Math.round(state.tileScaleX*100)+'%'; tileYVal.textContent=Math.round(state.tileScaleY*100)+'%';
-  if(lastStepPx){ tileXpx.textContent="≈ "+Math.round(lastStepPx.dx*state.tileScaleX)+" px"; tileYpx.textContent="≈ "+Math.round(lastStepPx.dy*state.tileScaleY)+" px"; }
-  else { tileXpx.textContent="– px"; tileYpx.textContent="– px"; }
+
+function progress(frac) {
+  const p = Math.max(0, Math.min(1, frac || 0));
+  bar.style.width = `${Math.round(p * 100)}%`;
+  pct.textContent = `${Math.round(p * 100)}%`;
 }
-function persist(){
-  localStorage.setItem('ovShiftX', String(state.shiftX));
-  localStorage.setItem('ovShiftY', String(state.shiftY));
-  localStorage.setItem('ovScaleW', String(state.scaleW));
-  localStorage.setItem('ovScaleH', String(state.scaleH));
-  localStorage.setItem('ovTileScaleX', String(state.tileScaleX));
-  localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
-  updateUI(); applyTransformOnOverlay(overlay, baseBoundsObj);
+paletteSel.addEventListener('change', function () { currentPalette = this.value; localStorage.setItem('ovPalette', currentPalette); if (lastCells) { rerenderSameData(); } });
+
+/*
+ * Farbpaletten und Legenden-Logik
+ */
+function hex2rgb(h) { h = h.replace('#', ''); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function lerpColor(c1, c2, t) { return [Math.round(lerp(c1[0], c2[0], t)), Math.round(lerp(c1[1], c2[1], t)), Math.round(lerp(c1[2], c2[2], t))]; }
+function hslToRgb(h, s, l) { h = ((h % 360) + 360) % 360; s = Math.max(0, Math.min(1, s)); l = Math.max(0, Math.min(1, l)); const c = (1 - Math.abs(2 * l - 1)) * s, hp = h / 60, x = c * (1 - Math.abs(hp % 2 - 1)); let r = 0, g = 0, b = 0; if (hp < 1) { r = c; g = x; } else if (hp < 2) { r = x; g = c; } else if (hp < 3) { g = c; b = x; } else if (hp < 4) { g = x; b = c; } else if (hp < 5) { r = x; b = c; } else { r = c; b = x; } const m = l - c / 2; return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)]; }
+
+function getStops(name) {
+  if (name === 'viridis') { return [{ t: 0.00, c: [68, 1, 84] }, { t: 0.07, c: [72, 30, 110] }, { t: 0.14, c: [64, 67, 135] }, { t: 0.21, c: [55, 90, 140] }, { t: 0.28, c: [45, 115, 142] }, { t: 0.35, c: [37, 137, 141] }, { t: 0.42, c: [31, 159, 136] }, { t: 0.50, c: [43, 183, 122] }, { t: 0.58, c: [84, 199, 101] }, { t: 0.66, c: [129, 211, 78] }, { t: 0.74, c: [173, 220, 52] }, { t: 0.82, c: [212, 225, 33] }, { t: 0.90, c: [238, 229, 27] }, { t: 0.96, c: [247, 229, 32] }, { t: 1.00, c: [253, 231, 37] }]; }
+  if (name === 'spectral') { const cols = ['#5e4fa2', '#3288bd', '#66c2a5', '#abdda4', '#e6f598', '#ffffbf', '#fee08b', '#fdae61', '#f46d43', '#d53e4f', '#9e0142']; const s = []; for (let i = 0; i < cols.length; i++) { s.push({ t: i / (cols.length - 1), c: hex2rgb(cols[i]) }); } return s; }
+  if (name === 'rainbow') { const N = 9, s = []; for (let i = 0; i < N; i++) { const t = i / (N - 1), hue = 260 + (-280 * t); s.push({ t: t, c: hslToRgb(hue, 1.0, 0.52) }); } return s; }
+  if (name === 'soil') { const cols = ['#a52a2a', '#e9d6af', '#66c2a5', '#3288bd', '#5e4fa2']; const s = []; for (let i = 0; i < cols.length; i++) { s.push({ t: i / (cols.length - 1), c: hex2rgb(cols[i]) }); } return s; }
+  return getStops('spectral');
 }
 
-/* ======== Renderer ======== */
-function renderToCanvas(cells,bounds){
-  var PX_W=CANVAS_W, widthDeg=bounds.east-bounds.west, heightDeg=bounds.north-bounds.south;
-  var PX_H=Math.max(1,Math.round(PX_W*(heightDeg/widthDeg)));
-  var cvs=document.createElement('canvas'); cvs.width=PX_W; cvs.height=PX_H;
-  var ctx=cvs.getContext('2d',{willReadFrequently:false}); ctx.imageSmoothingEnabled=false;
-  var img=ctx.createImageData(PX_W,PX_H), data=img.data;
-  var lonPerPx=widthDeg/PX_W, latPerPx=heightDeg/PX_H;
+let STOPS = getStops(currentPalette), PALETTE = null;
+function colorFromStops(t) { t = Math.max(0, Math.min(1, t)); let i = 0; while (i < STOPS.length - 1 && t > STOPS[i + 1].t) i++; const a = STOPS[i], b = STOPS[i + 1], local = (t - a.t) / (b.t - a.t + 1e-12); return lerpColor(a.c, b.c, local); }
+function buildPalette(name, n) { STOPS = getStops(name); const arr = new Array(n); for (let i = 0; i < n; i++) { const t = i / (n - 1); arr[i] = colorFromStops(t); } return arr; }
+function colorFor(v, vmin, vmax) { if (!isFinite(v)) return [0, 0, 0, 0]; let t = (v - vmin) / (vmax - vmin + 1e-12); t = Math.max(0, Math.min(1, t)); const c = PALETTE && PALETTE.length ? PALETTE[Math.round(t * (PALETTE.length - 1))] : colorFromStops(t); return [c[0], c[1], c[2], 255]; }
 
-  var vals=new Array(cells.length); for(var i=0;i<cells.length;i++) vals[i]=cells[i].v;
-  var rr=robustRange(vals), vmin=rr.vmin, vmax=rr.vmax;
+const legendCtrl = L.control({ position: 'bottomright' });
+legendCtrl.onAdd = function () {
+  const div = L.DomUtil.create('div', 'leaflet-control legend');
+  div.innerHTML = `<div id="legendTitle" style="font-weight:600;margin-bottom:4px"></div><canvas id="legendCanvas" width="240" height="12"></canvas><div class="legend-row"><span id="vminLabel">min</span><span id="vmaxLabel">max</span></div><div class="hint">Skalierung: 2–98&nbsp;%</div>`;
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+legendCtrl.addTo(map);
 
-  PALETTE=buildPalette(currentPalette,256); updateLegend(vmin,vmax);
-
-  var stepPx=estimateGridStepPx(cells,bounds,lonPerPx,latPerPx,PX_W,PX_H); lastStepPx=stepPx;
-  var halfDxPx=Math.max(0.5,0.5*stepPx.dx*state.tileScaleX), halfDyPx=Math.max(0.5,0.5*stepPx.dy*state.tileScaleY);
-
-  var done=0;
-  for (var c=0;c<cells.length;c++){
-    var cell=cells[c], cw_px=(cell.maxx-cell.minx)/lonPerPx, ch_px=(cell.maxy-cell.miny)/latPerPx;
-    var px0,px1,py0,py1;
-    if(cw_px>1 && ch_px>1){
-      px0=Math.max(0,Math.floor((cell.minx-bounds.west)/lonPerPx));
-      px1=Math.min(PX_W-1,Math.ceil((cell.maxx-bounds.west)/lonPerPx));
-      py0=Math.max(0,Math.floor((bounds.north-cell.maxy)/latPerPx));
-      py1=Math.min(PX_H-1,Math.ceil((bounds.north-cell.miny)/latPerPx));
-    } else {
-      var cx_deg=0.5*(cell.minx+cell.maxx), cy_deg=0.5*(cell.miny+cell.maxy);
-      var cx_px=(cx_deg-bounds.west)/lonPerPx, cy_px=(bounds.north-cy_deg)/latPerPx;
-      px0=Math.max(0,Math.floor(cx_px-halfDxPx)); px1=Math.min(PX_W-1,Math.ceil(cx_px+halfDxPx));
-      py0=Math.max(0,Math.floor(cy_px-halfDyPx)); py1=Math.min(PX_H-1,Math.ceil(cy_px+halfDyPx));
-    }
-    if(px1<px0 || py1<py0) continue;
-
-    var col=colorFor(cell.v,vmin,vmax), r=col[0], g=col[1], b=col[2], a=255;
-    for (var y=py0; y<=py1; y++){ var idx=(y*PX_W+px0)*4; for (var x=px0; x<=px1; x++){ data[idx]=r; data[idx+1]=g; data[idx+2]=b; data[idx+3]=a; idx+=4; } }
-    done++; if((done%1500)===0) progress(done/cells.length);
+function updateLegend(vmin, vmax) {
+  const paramConf = PARAMS[currentParam];
+  const c = document.getElementById('legendCanvas'); if (!c) return;
+  const ctx = c.getContext('2d'), w = c.width, h = c.height, img = ctx.createImageData(w, h);
+  for (let x = 0; x < w; x++) {
+    const t = x / (w - 1);
+    const col = PALETTE && PALETTE.length ? PALETTE[Math.round(t * (PALETTE.length - 1))] : colorFromStops(t);
+    for (let y = 0; y < h; y++) { const i = (y * w + x) * 4; img.data[i] = col[0]; img.data[i + 1] = col[1]; img.data[i + 2] = col[2]; img.data[i + 3] = 255; }
   }
-  ctx.putImageData(img,0,0); progress(1); return { canvas:cvs, width:PX_W, height:PX_H };
+  ctx.putImageData(img, 0, 0);
+  const titleEl = document.getElementById('legendTitle'), vminEl = document.getElementById('vminLabel'), vmaxEl = document.getElementById('vmaxLabel');
+  if (titleEl) titleEl.textContent = `${paramConf.name} (${paramConf.unit})`;
+  if (vminEl) vminEl.textContent = `${vmin.toFixed(1)} ${paramConf.unit}`;
+  if (vmaxEl) vmaxEl.textContent = `${vmax.toFixed(1)} ${paramConf.unit}`;
 }
 
-/* ======== Overlay ======== */
-function applyTransformOnOverlay(ov,base){
-  if(!ov||!ov._image||!base) return;
-  var B=base, w0=(B.east-B.west), h0=(B.north-B.south), cx=B.west+w0/2, cy=B.south+h0/2;
-  var wdeg=w0*(1+state.scaleW/100), hdeg=h0*(1+state.scaleH/100);
-  var wpx=ov._image.naturalWidth||0, hpx=ov._image.naturalHeight||0;
-  var lonPerPx=wpx?(w0/wpx):0, latPerPx=hpx?(h0/hpx):0;
-  var dLon=state.shiftX*lonPerPx, dLat=state.shiftY*latPerPx;
-  var west=(cx-wdeg/2)+dLon, east=(cx+wdeg/2)+dLon, south=(cy-hdeg/2)+dLat, north=(cy+hdeg/2)+dLat;
-  var adj=L.latLngBounds([south,west],[north,east]); ov.setBounds(adj);
-  if(rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
-}
-function placeOverlayFromCanvas(rr){
-  lastCanvas=rr.canvas;
-  var url=rr.canvas.toDataURL("image/png");
-  if(overlay){ try{ map.removeLayer(overlay);}catch(e){} }
-  overlay=L.imageOverlay(url, baseBounds, { opacity:Number(document.getElementById('opacity').value)/100 }).addTo(map);
-  overlay.on('load', function(){ applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
-}
-function rerenderSameData(){ if(!lastCells||!baseBoundsObj){ toast("Bitte erst laden"); return; } progress(0.05); var rr=renderToCanvas(lastCells, baseBoundsObj); placeOverlayFromCanvas(rr); }
+/*
+ * Hilfsfunktionen für Statistik und Geometrie
+ */
+function quantile(sorted, q) { if (!sorted.length) return NaN; const pos = (sorted.length - 1) * q, base = Math.floor(pos), rest = pos - base; if (sorted[base + 1] !== undefined) return sorted[base] + rest * (sorted[base + 1] - sorted[base]); return sorted[base]; }
+function robustRange(vals) { const a = []; for (let i = 0; i < vals.length; i++) if (isFinite(vals[i])) a.push(vals[i]); if (!a.length) return { vmin: 0, vmax: 1 }; a.sort((x, y) => x - y); let v2 = quantile(a, 0.02), v98 = quantile(a, 0.98); if (!isFinite(v2) || !isFinite(v98) || v98 <= v2) { v2 = a[0]; v98 = a[a.length - 1]; } if (v98 <= v2) v98 = v2 + 1e-6; return { vmin: v2, vmax: v98 }; }
 
-/* ======== Render-Flow ======== */
-function renderOverlay(opts){
-  opts=opts||{}; progress(0); if(!opts.silent) toast("Lade Daten …");
-  try{
-    var start=startEl.value, end=endEl.value;
-    var partsStr=document.getElementById('bbox').value.trim().split(',');
-    if(partsStr.length!==4){ alert("BBOX-Format: south,west,north,east"); return; }
-    var parts=[]; for (var i=0;i<4;i++){ var p=parseFloat(partsStr[i]); if(!isFinite(p)){ alert("BBOX ungültig"); return; } parts.push(p); }
-    var south=parts[0], west=parts[1], north=parts[2], east=parts[3];
-    baseBoundsObj={south:south, west:west, north:north, east:east}; baseBounds=L.latLngBounds([south,west],[north,east]);
+function loadFeatureCollection(param, start, end, bbox) {
+  const params = new URLSearchParams({ parameters: param, start: start, end: end, bbox: bbox.join(',') });
+  return fetch(`${DATASET_URL}?${params.toString()}`, { headers: { "Accept": "application/json" } })
+    .then(r => { if (!r.ok) return r.text().then(t => { throw new Error(`HTTP ${r.status} ${t}`); }); return r.json(); })
+    .then(fc => { if (!fc || fc.type !== "FeatureCollection" || !Array.isArray(fc.features)) throw new Error("Keine FeatureCollection erhalten."); return fc; });
+}
 
-    loadFeatureCollection(start,end,parts).then(function(fc){
-      var timestamps=fc.timestamps||[], nt=timestamps.length;
-      var feats=fc.features||[], cells=[];
-      for (var i=0;i<feats.length;i++){
-        var f=feats[i], geom=f && f.geometry; if(!geom) continue;
-        var vals=extractValues((f.properties||{}), nt); if(!vals) continue;
-        var sum=0; for (var j=0;j<vals.length;j++){ var vv=vals[j]; if(isFinite(vv)) sum+=vv; }
-        var bb=bboxFromGeom(geom); cells.push({ v:sum, minx:bb[0], miny:bb[1], maxx:bb[2], maxy:bb[3] });
-        if((i%1500)===0) progress(i/feats.length);
+function extractValues(props, nt, param) {
+  if (props && props.parameters && props.parameters[param]) {
+    const paramObj = props.parameters[param];
+    if (Array.isArray(paramObj) && paramObj.length > 0) { const numeric = paramObj.filter(v => typeof v === 'number'); if (numeric.length > 0) return numeric; }
+    if (paramObj && Array.isArray(paramObj.values) && paramObj.values.length > 0) { const numeric = paramObj.values.filter(v => typeof v === 'number'); if (numeric.length > 0) return numeric; }
+  }
+  const prefer = [param, String(param).toLowerCase(), "value", "values"];
+  for (let i = 0; i < prefer.length; i++) { const v = props[prefer[i]]; if (Array.isArray(v) && v.length > 0) { const out = []; for (let j = 0; j < v.length; j++) { const x = v[j]; if (typeof x === 'number' && isFinite(x)) out.push(Number(x)); } if (out.length > 0) return out; } }
+  const keys = Object.keys(props);
+  for (let k = 0; k < keys.length; k++) { const v2 = props[keys[k]]; if (Array.isArray(v2) && (nt ? v2.length === nt : v2.length > 0)) { const out2 = []; for (let j2 = 0; j2 < v2.length; j2++) { const y = v2[j2]; if (typeof y === 'number' && isFinite(y)) out2.push(Number(y)); } if (out2.length > 0) return out2; } }
+  let found = null; (function scan(o) { if (found) return; if (Array.isArray(o)) { if (o.length > 0) { let num = false; for (let q = 0; q < o.length; q++) { if (typeof o[q] === 'number' && isFinite(o[q])) { num = true; break; } } if (num) { found = o.map(z => Number(z)); return; } } for (let q2 = 0; q2 < o.length; q2++) scan(o[q2]); } else if (o && typeof o === 'object') { const ks = Object.keys(o); for (let m = 0; m < ks.length; m++) scan(o[ks[m]]); } })(props);
+  return found;
+}
+
+function bboxFromGeom(geom) {
+  const coords = geom && geom.coordinates; let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+  (function walk(node) { if (!node) return; if (Array.isArray(node)) { if (node.length >= 2 && typeof node[0] === 'number' && typeof node[1] === 'number') { const x = node[0], y = node[1]; if (x < minx) minx = x; if (x > maxx) maxx = x; if (y < miny) miny = y; if (y > maxy) maxy = y; } else { for (let i = 0; i < node.length; i++) walk(node[i]); } } })(coords);
+  return [minx, miny, maxx, maxy];
+}
+
+function medianFrom(arr) { const a = []; for (let i = 0; i < arr.length; i++) if (isFinite(arr[i])) a.push(arr[i]); if (!a.length) return NaN; a.sort((x, y) => x - y); const mid = 0.5 * (a.length - 1), lo = Math.floor(mid), hi = Math.ceil(mid); return a[lo] + (mid - lo) * (a[hi] - a[lo]); }
+function estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, pxW, pxH) {
+  const wpx = [], hpx = [], cx = [], cy = [];
+  for (let i = 0; i < cells.length; i++) {
+    const cw = (cells[i].maxx - cells[i].minx) / lonPerPx, ch = (cells[i].maxy - cells[i].miny) / latPerPx;
+    if (cw > 0) wpx.push(cw); if (ch > 0) hpx.push(ch);
+    const cx_deg = 0.5 * (cells[i].minx + cells[i].maxx), cy_deg = 0.5 * (cells[i].miny + cells[i].maxy);
+    cx.push((cx_deg - bounds.west) / lonPerPx); cy.push((bounds.north - cy_deg) / latPerPx);
+  }
+  let dx = medianFrom(wpx), dy = medianFrom(hpx);
+  if (!isFinite(dx) || dx <= 0) { cx.sort((a, b) => a - b); const difX = []; for (let i2 = 1; i2 < cx.length; i2++) { const d = cx[i2] - cx[i2 - 1]; if (d > 0.25) difX.push(d); } dx = medianFrom(difX); }
+  if (!isFinite(dy) || dy <= 0) { cy.sort((a, b) => a - b); const difY = []; for (let j = 1; j < cy.length; j++) { const d2 = cy[j] - cy[j - 1]; if (d2 > 0.25) difY.push(d2); } dy = medianFrom(difY); }
+  if (!isFinite(dx) || dx <= 0 || !isFinite(dy) || dy <= 0) { const N = Math.max(1, cells.length), AR = pxW / pxH; if (!isFinite(dx) || dx <= 0) dx = pxW / Math.sqrt(N * AR); if (!isFinite(dy) || dy <= 0) dy = pxH / Math.sqrt(N / AR); }
+  return { dx: Math.max(1, dx * 1.05), dy: Math.max(1, dy * 1.05) };
+}
+
+/*
+ * Haupt-Rendering- und Overlay-Logik
+ */
+function updateUI() {
+  state.tileScaleX = Math.min(6, Math.max(2, state.tileScaleX));
+  state.tileScaleY = Math.min(6, Math.max(2, state.tileScaleY));
+  pxX.textContent = state.shiftX; pxY.textContent = state.shiftY;
+  wPct.textContent = state.scaleW.toFixed(1); hPct.textContent = state.scaleH.toFixed(1);
+  tileX.value = String(Math.round(state.tileScaleX * 100)); tileY.value = String(Math.round(state.tileScaleY * 100));
+  tileXVal.textContent = `${Math.round(state.tileScaleX * 100)}%`; tileYVal.textContent = `${Math.round(state.tileScaleY * 100)}%`;
+  if (lastStepPx) { tileXpx.textContent = `≈ ${Math.round(lastStepPx.dx * state.tileScaleX)} px`; tileYpx.textContent = `≈ ${Math.round(lastStepPx.dy * state.tileScaleY)} px`; } else { tileXpx.textContent = "– px"; tileYpx.textContent = "– px"; }
+}
+function persist() {
+  localStorage.setItem('ovShiftX', String(state.shiftX)); localStorage.setItem('ovShiftY', String(state.shiftY));
+  localStorage.setItem('ovScaleW', String(state.scaleW)); localStorage.setItem('ovScaleH', String(state.scaleH));
+  localStorage.setItem('ovTileScaleX', String(state.tileScaleX)); localStorage.setItem('ovTileScaleY', String(state.tileScaleY));
+  applyTransformOnOverlay(overlay, baseBoundsObj);
+  updateUI();
+}
+
+function renderToCanvas(cells, bounds) {
+  const PX_W = CANVAS_W, widthDeg = bounds.east - bounds.west, heightDeg = bounds.north - bounds.south;
+  const PX_H = Math.max(1, Math.round(PX_W * (heightDeg / widthDeg)));
+  const cvs = document.createElement('canvas'); cvs.width = PX_W; cvs.height = PX_H;
+  const ctx = cvs.getContext('2d', { willReadFrequently: false }); ctx.imageSmoothingEnabled = false;
+  const img = ctx.createImageData(PX_W, PX_H), data = img.data;
+  const lonPerPx = widthDeg / PX_W, latPerPx = heightDeg / PX_H;
+
+  const vals = new Array(cells.length); for (let i = 0; i < cells.length; i++) vals[i] = cells[i].v;
+  const rr = robustRange(vals), vmin = rr.vmin, vmax = rr.vmax;
+  Log.info('range', JSON.stringify({ vmin, vmax, n: vals.length }));
+
+  const pal = currentParam === 'SM' ? 'soil' : currentPalette;
+  PALETTE = buildPalette(pal, 256); 
+  updateLegend(vmin, vmax);
+
+  const stepPx = estimateGridStepPx(cells, bounds, lonPerPx, latPerPx, PX_W, PX_H); lastStepPx = stepPx;
+  const halfDxPx = Math.max(0.5, 0.5 * stepPx.dx * state.tileScaleX), halfDyPx = Math.max(0.5, 0.5 * stepPx.dy * state.tileScaleY);
+
+  let done = 0;
+  for (let c = 0; c < cells.length; c++) {
+    const cell = cells[c], cw_px = (cell.maxx - cell.minx) / lonPerPx, ch_px = (cell.maxy - cell.miny) / latPerPx;
+    let px0, px1, py0, py1;
+    if (cw_px > 1 && ch_px > 1) {
+      px0 = Math.max(0, Math.floor((cell.minx - bounds.west) / lonPerPx));
+      px1 = Math.min(PX_W - 1, Math.ceil((cell.maxx - bounds.west) / lonPerPx));
+      py0 = Math.max(0, Math.floor((bounds.north - cell.maxy) / latPerPx));
+      py1 = Math.min(PX_H - 1, Math.ceil((bounds.north - cell.miny) / latPerPx));
+    } else {
+      const cx_deg = 0.5 * (cell.minx + cell.maxx), cy_deg = 0.5 * (cell.miny + cell.maxy);
+      const cx_px = (cx_deg - bounds.west) / lonPerPx, cy_px = (bounds.north - cy_deg) / latPerPx;
+      px0 = Math.max(0, Math.floor(cx_px - halfDxPx)); px1 = Math.min(PX_W - 1, Math.ceil(cx_px + halfDxPx));
+      py0 = Math.max(0, Math.floor(cy_px - halfDyPx)); py1 = Math.min(PX_H - 1, Math.ceil(cy_px + halfDyPx));
+    }
+    if (px1 < px0 || py1 < py0) continue;
+
+    const col = colorFor(cell.v, vmin, vmax), r = col[0], g = col[1], b = col[2], a = 255;
+    for (let y = py0; y <= py1; y++) { let idx = (y * PX_W + px0) * 4; for (let x = px0; x <= px1; x++) { data[idx] = r; data[idx + 1] = g; data[idx + 2] = b; data[idx + 3] = a; idx += 4; } }
+    done++; if ((done % 1500) === 0) progress(done / cells.length);
+  }
+  ctx.putImageData(img, 0, 0); progress(1); return { canvas: cvs, width: PX_W, height: PX_H };
+}
+
+function applyTransformOnOverlay(ov, base) {
+  if (!ov || !ov._image || !base) return;
+  const B = base, w0 = (B.east - B.west), h0 = (B.north - B.south), cx = B.west + w0 / 2, cy = B.south + h0 / 2;
+  const wdeg = w0 * (1 + state.scaleW / 100), hdeg = h0 * (1 + state.scaleH / 100);
+  const wpx = ov._image.naturalWidth || 0, hpx = ov._image.naturalHeight || 0;
+  const lonPerPx = wpx ? (w0 / wpx) : 0, latPerPx = hpx ? (h0 / hpx) : 0;
+  const dLon = state.shiftX * lonPerPx, dLat = state.shiftY * latPerPx;
+  const west = (cx - wdeg / 2) + dLon, east = (cx + wdeg / 2) + dLon, south = (cy - hdeg / 2) + dLat, north = (cy + hdeg / 2) + dLat;
+  const adj = L.latLngBounds([south, west], [north, east]); ov.setBounds(adj);
+  if (rect && document.getElementById('showBounds').checked) rect.setBounds(adj);
+}
+function placeOverlayFromCanvas(rr) {
+  lastCanvas = rr.canvas;
+  const url = rr.canvas.toDataURL("image/png");
+  if (overlay) { try { map.removeLayer(overlay); } catch (e) { /* ignore */ } }
+  overlay = L.imageOverlay(url, baseBounds, { opacity: Number(document.getElementById('opacity').value) / 100, className: 'rain' }).addTo(map);
+  overlay.on('load', () => { applyTransformOnOverlay(overlay, baseBoundsObj); updateUI(); });
+  Log.info('overlay:placed', JSON.stringify({ bounds: baseBoundsObj }));
+}
+function rerenderSameData() { if (!lastCells || !baseBoundsObj) { toast("Bitte erst laden"); return; } progress(0.05); const rr = renderToCanvas(lastCells, baseBoundsObj); placeOverlayFromCanvas(rr); }
+
+function calculateSoilMoisture(rr_values, tx_values) {
+    let moisture = 50.0; // Startwert in %
+    const moisture_history = [];
+    const EVAPO_FACTOR = 0.1; // Ein sehr einfacher Faktor, wie stark die Temperatur die Verdunstung beeinflusst
+
+    for(let i=0; i < rr_values.length; i++) {
+        const rain = rr_values[i] || 0;
+        const temp = tx_values[i] || 0;
+
+        // Verdunstung ist höher bei höheren Temperaturen, aber nicht bei Frost
+        const evaporation = temp > 0 ? (temp * EVAPO_FACTOR) : 0;
+        
+        // Wasserbilanz
+        moisture += rain - evaporation;
+        
+        // Boden kann nicht mehr als 100% Feuchte haben und nicht weniger als 0%
+        moisture = Math.max(0, Math.min(100, moisture));
+        moisture_history.push(moisture);
+    }
+    return moisture_history;
+}
+
+async function renderOverlay(opts) {
+  opts = opts || {}; progress(0); if (!opts.silent) toast("Lade Daten …");
+  
+  const paramConf = PARAMS[currentParam];
+  
+  try {
+    const start = startEl.value, end = endEl.value;
+    const partsStr = document.getElementById('bbox').value.trim().split(',');
+    if (partsStr.length !== 4) { toast("BBOX-Format: s,w,n,e"); return; }
+    const parts = []; for (let i = 0; i < 4; i++) { const p = parseFloat(partsStr[i]); if (!isFinite(p)) { toast("BBOX ungültig"); return; } parts.push(p); }
+    const [south, west, north, east] = parts;
+    baseBoundsObj = { south, west, north, east }; baseBounds = L.latLngBounds([south, west], [north, east]);
+    
+    const apiParams = Array.isArray(paramConf.api) ? paramConf.api : [paramConf.api];
+    Log.info('render:start', JSON.stringify({ params: apiParams, start, end, bbox: parts }));
+
+    const promises = apiParams.map(p => loadFeatureCollection(p, start, end, parts));
+    const results = await Promise.all(promises);
+
+    const timestamps = results[0].timestamps || [];
+    const feats = results[0].features || [];
+    const cells = [];
+    Log.info('fc:stats', JSON.stringify({ features: feats.length, nt: timestamps.length }));
+
+    // Daten aus der zweiten Abfrage (falls vorhanden) in einer Map für schnellen Zugriff speichern
+    const extraData = new Map();
+    if (results.length > 1) {
+      for(const f of results[1].features) {
+        const bb = bboxFromGeom(f.geometry);
+        const key = `${bb[0].toFixed(5)},${bb[1].toFixed(5)}`;
+        extraData.set(key, f.properties);
       }
-      lastCells=cells.slice(0);
-      if(!opts.silent) toast("Zellen: "+cells.length);
-      var rr=renderToCanvas(cells, baseBoundsObj); placeOverlayFromCanvas(rr);
-      if(opts.fit!==false) map.fitBounds(baseBounds.pad(0.1));
-    }).catch(function(err){ console.error(err); alert("Fehler beim Laden/Rendern: "+(err && err.message? err.message: err)); });
-  } catch(e){ console.error(e); alert("Fehler beim Laden/Rendern: "+(e && e.message? e.message: e)); }
+    }
+
+    for (let i = 0; i < feats.length; i++) {
+        const f = feats[i];
+        if (!f || !f.geometry) continue;
+        
+        const bb = bboxFromGeom(f.geometry);
+        const key = `${bb[0].toFixed(5)},${bb[1].toFixed(5)}`;
+        
+        let cellValue;
+
+        if (paramConf.calc === 'model') {
+            const rr_props = f.properties;
+            const tx_props = extraData.get(key);
+            if (!rr_props || !tx_props) continue;
+
+            const rr_vals = extractValues(rr_props, timestamps.length, 'RR');
+            const tx_vals = extractValues(tx_props, timestamps.length, 'TX');
+
+            if (rr_vals && tx_vals) {
+                const moisture_history = calculateSoilMoisture(rr_vals, tx_vals);
+                // Nimm den Durchschnitt der Feuchte über den Zeitraum
+                let sum = 0;
+                moisture_history.forEach(m => sum += m);
+                cellValue = moisture_history.length > 0 ? sum / moisture_history.length : -9999;
+            } else {
+                cellValue = -9999;
+            }
+        } else {
+            const vals = extractValues((f.properties || {}), timestamps.length, paramConf.api);
+            if (!vals) continue;
+
+            if (paramConf.calc === 'sum') {
+                let sum = 0; vals.forEach(v => { if (isFinite(v)) sum += v; }); cellValue = sum;
+            } else { // 'avg'
+                let sum = 0, count = 0; vals.forEach(v => { if (isFinite(v)) { sum += v; count++; } }); cellValue = count > 0 ? sum / count : -9999;
+            }
+        }
+
+        if (cellValue > -999) { 
+            cells.push({ v: cellValue, minx: bb[0], miny: bb[1], maxx: bb[2], maxy: bb[3] });
+        }
+        if ((i % 1500) === 0) progress(0.1 + 0.8 * (i / feats.length));
+    }
+
+    lastCells = [...cells];
+    if (!opts.silent) toast(`Zellen: ${cells.length}`);
+    Log.info('cells', String(cells.length));
+    
+    if (cells.length === 0) {
+        toast("Keine gültigen Daten gefunden.");
+        progress(0);
+        return;
+    }
+
+    const rr = renderToCanvas(cells, baseBoundsObj);
+    placeOverlayFromCanvas(rr);
+    if (opts.fit !== false) map.fitBounds(baseBounds.pad(0.1));
+    Log.info('render:done');
+  } catch (e) { console.error(e); Log.error('render:throw', String(e && e.message ? e.message : e)); toast(`Fehler: ${e.message}`); progress(0); }
 }
 
-/* ======== Buttons (im Drawer + Leaflet-Controls) ======== */
-document.getElementById('renderBtn').addEventListener('click', function(){ renderOverlay({fit:true}); });
-document.getElementById('dlPng').addEventListener('click', function(){
-  if(!lastCanvas){ toast("Bitte zuerst rendern"); return; }
-  var a=document.createElement('a'), start=startEl.value||'start', end=endEl.value||'end';
-  a.download='rr_sum_'+start+'_bis_'+end+'.png'; a.href=lastCanvas.toDataURL('image/png');
+/*
+ * Event-Listener für UI-Elemente
+ */
+document.getElementById('renderBtn').addEventListener('click', () => renderOverlay({ fit: true }));
+document.getElementById('dlPng').addEventListener('click', () => {
+  if (!lastCanvas) { toast("Bitte zuerst rendern"); return; }
+  const a = document.createElement('a'), start = startEl.value || 'start', end = endEl.value || 'end';
+  a.download = `${currentParam}_${start}_bis_${end}.png`; a.href = lastCanvas.toDataURL('image/png');
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
 });
-document.getElementById('opacity').addEventListener('input', function(){ if(overlay) overlay.setOpacity(Number(this.value)/100); document.getElementById('ovv').textContent=this.value+'%'; });
-document.getElementById('showBounds').addEventListener('change', function(){ var checked=this.checked;
-  if(checked){ rect=L.rectangle(overlay? overlay._bounds: baseBounds,{color:'red',weight:1}).addTo(map); }
-  else { if(rect){ map.removeLayer(rect); rect=null; } }});
+document.getElementById('opacity').addEventListener('input', function () { 
+    const opacityValue = Number(this.value) / 100;
+    if (overlay) overlay.setOpacity(opacityValue); 
+    document.getElementById('ovv').textContent = `${this.value}%`; 
+});
+document.getElementById('showBounds').addEventListener('change', function () {
+  if (this.checked) { rect = L.rectangle(overlay ? overlay._bounds : baseBounds, { color: 'red', weight: 1 }).addTo(map); }
+  else { if (rect) { map.removeLayer(rect); rect = null; } }
+});
+document.getElementById('reset').addEventListener('click', () => { if (baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
 
-/* Links oben: GPS / Reset */
-document.getElementById('reset').addEventListener('click', function(){ if(baseBounds) map.fitBounds(baseBounds.pad(0.1)); });
-/* GPS */
-var watchId=null, gpsMarker=null, accCircle=null, firstFix=true;
-function startWatch(){
-  if(watchId!==null) return;
-  watchId=navigator.geolocation.watchPosition(function(pos){
-    var lat=pos.coords.latitude, lon=pos.coords.longitude, acc=pos.coords.accuracy;
-    if(!gpsMarker) gpsMarker=L.marker([lat,lon]).addTo(map).bindPopup("Du bist hier");
-    gpsMarker.setLatLng([lat,lon]); if(accCircle) map.removeLayer(accCircle);
-    accCircle=L.circle([lat,lon],acc,{opacity:0.6,fillOpacity:0.08}).addTo(map);
-    if(firstFix){ map.setView([lat,lon], Math.max(map.getZoom(),12)); firstFix=false; }
-  }, function(err){
-    if(err.code===err.PERMISSION_DENIED) toast("Standort verweigert. Safari: aA → Website-Einstellungen → Standort: Erlauben");
-    else toast("GPS-Fehler: "+err.message);
-  }, { enableHighAccuracy:true, maximumAge:10000, timeout:15000 });
+document.getElementById('left').addEventListener('click', () => { state.shiftX -= 1; persist(); });
+document.getElementById('right').addEventListener('click', () => { state.shiftX += 1; persist(); });
+document.getElementById('up').addEventListener('click', () => { state.shiftY += 1; persist(); });
+document.getElementById('down').addEventListener('click', () => { state.shiftY -= 1; persist(); });
+document.getElementById('wMinus').addEventListener('click', () => { state.scaleW -= 0.2; persist(); });
+document.getElementById('wPlus').addEventListener('click', () => { state.scaleW += 0.2; persist(); });
+document.getElementById('hMinus').addEventListener('click', () => { state.scaleH -= 0.2; persist(); });
+document.getElementById('hPlus').addEventListener('click', () => { state.scaleH += 0.2; persist(); });
+document.getElementById('tileX').addEventListener('input', (e) => { state.tileScaleX = Math.max(2, Math.min(6, Number(e.target.value) / 100)); updateUI(); if (lastCells) rerenderSameData(); });
+document.getElementById('tileY').addEventListener('input', (e) => { state.tileScaleY = Math.max(2, Math.min(6, Number(e.target.value) / 100)); updateUI(); if (lastCells) rerenderSameData(); });
+
+let watchId = null, gpsMarker = null, accCircle = null, firstFix = true;
+function startWatch() {
+  if (watchId !== null) return;
+  watchId = navigator.geolocation.watchPosition(pos => {
+    const { latitude: lat, longitude: lon, accuracy: acc } = pos.coords;
+    if (!gpsMarker) gpsMarker = L.marker([lat, lon]).addTo(map).bindPopup("Du bist hier");
+    gpsMarker.setLatLng([lat, lon]); if (accCircle) map.removeLayer(accCircle);
+    accCircle = L.circle([lat, lon], acc, { opacity: 0.6, fillOpacity: 0.08 }).addTo(map);
+    if (firstFix) { map.setView([lat, lon], Math.max(map.getZoom(), 12)); firstFix = false; }
+  }, err => {
+    if (err.code === err.PERMISSION_DENIED) toast("Standort verweigert."); else toast(`GPS-Fehler: ${err.message}`);
+  }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 });
 }
-function requestOnceThenWatch(){
-  return new Promise(function(res,rej){
-    navigator.geolocation.getCurrentPosition(function(){ res(); }, function(e){ rej(e); },
-      { enableHighAccuracy:true, maximumAge:0, timeout:15000 });
-  }).then(function(){ startWatch(); document.getElementById('loc').textContent="📍 GPS aktiv"; toast("GPS aktiv"); })
-   .catch(function(e){ if(e && e.code===e.PERMISSION_DENIED) toast("Standort blockiert. iOS: Ortungsdienste für Safari freigeben.");
-                       else toast("GPS-Fehler: "+(e && e.message? e.message: e)); });
+function requestOnceThenWatch() {
+  new Promise((res, rej) => { navigator.geolocation.getCurrentPosition(() => res(), e => rej(e), { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }); })
+    .then(() => { startWatch(); document.getElementById('loc').textContent = "📍 GPS aktiv"; toast("GPS aktiv"); })
+    .catch(e => { toast(`GPS-Fehler: ${e.message}`); });
 }
-document.getElementById('loc').addEventListener('click', function(){
-  if(!('geolocation' in navigator)){ toast("Geolocation nicht verfügbar"); return; }
-  if(watchId===null) requestOnceThenWatch();
-  else { navigator.geolocation.clearWatch(watchId); watchId=null; firstFix=true;
-         if(gpsMarker){ map.removeLayer(gpsMarker); gpsMarker=null; }
-         if(accCircle){ map.removeLayer(accCircle); accCircle=null; }
-         this.textContent="📍 Meine Position"; toast("GPS aus"); }
+document.getElementById('loc').addEventListener('click', function () {
+  if (!('geolocation' in navigator)) { toast("Geolocation nicht verfügbar"); return; }
+  if (watchId === null) { requestOnceThenWatch(); }
+  else { navigator.geolocation.clearWatch(watchId); watchId = null; firstFix = true; if (gpsMarker) { map.removeLayer(gpsMarker); gpsMarker = null; } if (accCircle) { map.removeLayer(accCircle); accCircle = null; } this.textContent = "📍 Meine Position"; toast("GPS aus"); }
 });
 
-/* ======== Presets ======== */
-var presetSel=document.getElementById('preset'), applyPresetBtn=document.getElementById('applyPreset');
-function applyPreset(key){ var p=PRESETS[key]; if(!p) return;
-  document.getElementById('bbox').value=p.bbox.join(','); localStorage.setItem('ovPreset', key); renderOverlay({fit:true}); }
-applyPresetBtn.addEventListener('click', function(){ applyPreset(presetSel.value); });
-(function initPreset(){ var saved=localStorage.getItem('ovPreset')||'noe'; if(!PRESETS[saved]) saved='noe'; presetSel.value=saved;
-  document.getElementById('bbox').value=PRESETS[saved].bbox.join(','); })();
-
-/* ======== Punkt-Zeitreihe (Klick) ======== */
-var chartEl=document.getElementById('chartPanel'), chartTitle=document.getElementById('chartTitle');
-var chartSub=document.getElementById('chartSub'), chartMeta=document.getElementById('chartMeta');
-var closeChartBtn=document.getElementById('closeChart'), chartCanvas=document.getElementById('chartCanvas');
-var pointChart=null;
-closeChartBtn.addEventListener('click', function(){ if(pointChart){ pointChart.destroy(); pointChart=null; } chartEl.classList.remove('open'); });
-function kmToDegLat(km){ return km/111.0; } function kmToDegLon(km,lat){ return km/(111.320*Math.cos(lat*Math.PI/180)); }
-function buildPointBBox(lat,lon){ var halfKm=2.0, dLat=kmToDegLat(halfKm), dLon=kmToDegLon(halfKm,lat); return [lat-dLat, lon-dLon, lat+dLat, lon+dLon]; }
-function dist2Deg(lat1,lon1,lat2,lon2){ var x=(lon2-lon1)*Math.cos((lat1+lat2)*0.5*Math.PI/180), y=(lat2-lat1); return x*x+y*y; }
-function fetchPointTimeseries(lat,lon,start,end){
-  var bbox=buildPointBBox(lat,lon);
-  return loadFeatureCollection(start,end,bbox).then(function(fc){
-    var ts=fc.timestamps||[], feats=fc.features||[]; if(!feats.length) throw new Error("Keine Rasterzelle in der Nähe gefunden.");
-    var bestD=Infinity, bestVals=null, bestBB=null;
-    for(var i=0;i<feats.length;i++){
-      var f=feats[i], bb=bboxFromGeom(f.geometry), cx=0.5*(bb[0]+bb[2]), cy=0.5*(bb[1]+bb[3]);
-      var d2=dist2Deg(lat,lon,cy,cx), vals=extractValues(f.properties||{}, ts.length); if(!vals) continue;
-      if(d2<bestD){ bestD=d2; bestVals=vals; bestBB=bb; }
-    }
-    if(!bestVals) throw new Error("Keine Werte im nächsten Raster gefunden.");
-    return { timestamps:ts, values:bestVals, cellBBox:bestBB };
-  });
+const presetSel = document.getElementById('preset');
+function applyPreset(key) { 
+    const p = PRESETS[key]; 
+    if (!p) return; 
+    document.getElementById('bbox').value = p.bbox.join(','); 
+    localStorage.setItem('ovPreset', key); 
+    renderOverlay({ fit: true }); 
 }
-function openChart(lat,lon,timestamps,values){
-  var labels=timestamps.map(function(iso){ return iso.slice(0,10); });
-  var sum=0, vmin=Infinity, vmax=-Infinity;
-  for(var i=0;i<values.length;i++){ var v=Number(values[i]); if(!isFinite(v)) v=0; sum+=v; if(v<vmin)vmin=v; if(v>vmax)vmax=v; }
-  if(pointChart){ pointChart.destroy(); pointChart=null; }
-  pointChart=new Chart(chartCanvas.getContext('2d'),{
-    type:'bar', data:{ labels:labels, datasets:[{ label:'RR (mm/Tag)', data:values }] },
-    options:{ responsive:true, animation:{duration:200},
-      scales:{ x:{ title:{display:true,text:'Tag'}, ticks:{maxRotation:0,autoSkip:true} },
-               y:{ title:{display:true,text:'mm'}, beginAtZero:true } },
-      plugins:{ legend:{display:false}, tooltip:{ callbacks:{ label:function(ctx){ return (ctx.raw??0).toFixed(1)+' mm'; } } } }
+presetSel.addEventListener('change', function () { applyPreset(this.value); });
+(() => { const saved = localStorage.getItem('ovPreset') || 'noe'; if (!PRESETS[saved]) saved = 'noe'; presetSel.value = saved; document.getElementById('bbox').value = PRESETS[saved].bbox.join(','); })();
+
+/*
+ * Logik für das Klick-Diagramm
+ */
+const chartEl = document.getElementById('chartPanel'), chartTitle = document.getElementById('chartTitle');
+const chartSub = document.getElementById('chartSub'), chartMeta = document.getElementById('chartMeta');
+const closeChartBtn = document.getElementById('closeChart');
+let pointChart = null;
+closeChartBtn.addEventListener('click', () => { if (pointChart) { pointChart.destroy(); pointChart = null; } chartEl.classList.remove('open'); });
+
+function kmToDegLat(km) { return km / 111.0; }
+function kmToDegLon(km, lat) { return km / (111.320 * Math.cos(lat * Math.PI / 180)); }
+function buildPointBBox(lat, lon) { const halfKm = 2.0, dLat = kmToDegLat(halfKm), dLon = kmToDegLon(halfKm, lat); return [lat - dLat, lon - dLon, lat + dLat, lon + dLon]; }
+function dist2Deg(lat1, lon1, lat2, lon2) { const x = (lon2 - lon1) * Math.cos((lat1 + lat2) * 0.5 * Math.PI / 180), y = (lat2 - lat1); return x * x + y * y; }
+
+async function fetchPointTimeseries(lat, lon, start, end) {
+  try {
+    const bbox = buildPointBBox(lat, lon);
+    const paramConf = PARAMS[currentParam];
+    const apiParams = Array.isArray(paramConf.api) ? paramConf.api : [paramConf.api];
+    
+    const promises = apiParams.map(p => loadFeatureCollection(p, start, end, bbox));
+    const results = await Promise.all(promises);
+
+    const ts = results[0].timestamps || [], feats = results[0].features || [];
+    if (!feats.length) { return { error: "Keine Rasterzelle in der Nähe gefunden." }; }
+    
+    let bestD = Infinity, bestVals = null;
+
+    if (paramConf.calc === 'model') {
+        let best_rr_vals = null, best_tx_vals = null;
+        const tx_feats = results[1].features || [];
+
+        for (let i = 0; i < feats.length; i++) {
+            const f_rr = feats[i], bb_rr = bboxFromGeom(f_rr.geometry), cx_rr = 0.5*(bb_rr[0]+bb_rr[2]), cy_rr = 0.5*(bb_rr[1]+bb_rr[3]);
+            const d2 = dist2Deg(lat, lon, cy_rr, cx_rr);
+            if (d2 < bestD) {
+                bestD = d2;
+                best_rr_vals = extractValues(f_rr.properties || {}, ts.length, 'RR');
+                // Find matching TX feature
+                const f_tx = tx_feats.find(f => {
+                    const bb_tx = bboxFromGeom(f.geometry);
+                    return bb_tx[0] === bb_rr[0] && bb_tx[1] === bb_rr[1];
+                });
+                if (f_tx) {
+                    best_tx_vals = extractValues(f_tx.properties || {}, ts.length, 'TX');
+                }
+            }
+        }
+        if (best_rr_vals && best_tx_vals) {
+            bestVals = calculateSoilMoisture(best_rr_vals, best_tx_vals);
+        }
+
+    } else {
+        for (let i = 0; i < feats.length; i++) {
+            const f = feats[i], bb = bboxFromGeom(f.geometry), cx = 0.5 * (bb[0] + bb[2]), cy = 0.5 * (bb[1] + bb[3]);
+            const d2 = dist2Deg(lat, lon, cy, cx);
+            const vals = extractValues(f.properties || {}, ts.length, paramConf.api);
+            if (!vals) continue;
+            if (d2 < bestD) { bestD = d2; bestVals = vals; }
+        }
     }
-  });
-  chartTitle.innerHTML='<strong>RR (letzte 14 Tage)</strong>';
-  chartSub.textContent='Punkt: '+lat.toFixed(5)+', '+lon.toFixed(5);
-  chartMeta.innerHTML=`<span>Zeitraum: <code>${labels[0]} – ${labels[labels.length-1]}</code></span>
-                       <span>Summe: <code>${sum.toFixed(1)} mm</code></span>
-                       <span>Min: <code>${isFinite(vmin)?vmin.toFixed(1):'–'} mm</code></span>
-                       <span>Max: <code>${isFinite(vmax)?vmax.toFixed(1):'–'} mm</code></span>`;
+
+    if (!bestVals) { return { error: "Keine Werte im nächsten Raster gefunden." }; }
+    return { timestamps: ts, values: bestVals };
+
+  } catch (err) {
+    Log.error('timeseries:fetch-error', String(err && err.message ? err.message : err));
+    return { error: err.message || "Unbekannter Netzwerkfehler" };
+  }
+}
+
+function openChart(lat, lon, timestamps, values) {
+  const paramConf = PARAMS[currentParam];
+  const labels = timestamps.map(iso => iso.slice(0, 10));
+  let sum = 0, count = 0, vmin = Infinity, vmax = -Infinity;
+  values.forEach(v_raw => { const v = Number(v_raw); if (isFinite(v)) { sum += v; count++; if (v < vmin) vmin = v; if (v > vmax) vmax = v; } });
+
+  if (pointChart) { pointChart.destroy(); pointChart = null; }
+
+  const chartBody = document.getElementById('chartBody');
+  const oldCanvas = document.getElementById('chartCanvas');
+  if (oldCanvas) oldCanvas.remove();
+  const newCanvas = document.createElement('canvas');
+  newCanvas.id = 'chartCanvas';
+  chartBody.prepend(newCanvas);
+
   chartEl.classList.add('open');
+  chartTitle.innerHTML = `<strong>14-Tage-Werte (${paramConf.name}) am Punkt</strong>`;
+  chartSub.textContent = `Punkt: ${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+
+  let statsHtml = `<span>Zeitraum: <code>${labels[0]} – ${labels[labels.length - 1]}</code></span>
+                   <span>Min: <code>${isFinite(vmin) ? vmin.toFixed(1) : '–'} ${paramConf.unit}</code></span>
+                   <span>Max: <code>${isFinite(vmax) ? vmax.toFixed(1) : '–'} ${paramConf.unit}</code></span>`;
+  
+  if (paramConf.calc === 'sum') { statsHtml += `<span>Summe: <code>${sum.toFixed(1)} ${paramConf.unit}</code></span>`; }
+  else { const avg = count > 0 ? sum / count : NaN; statsHtml += `<span>Mittel: <code>${isFinite(avg) ? avg.toFixed(1) : '–'} ${paramConf.unit}</code></span>`; }
+  chartMeta.innerHTML = statsHtml;
+  
+  const datasetConf = {
+      label: `${paramConf.name} (${paramConf.unit}/Tag)`, 
+      data: values
+  };
+  if (currentParam === 'SM') datasetConf.backgroundColor = 'rgba(139, 69, 19, 0.7)';
+  else if (currentParam === 'TX') datasetConf.backgroundColor = 'rgba(244, 109, 67, 0.7)';
+  else datasetConf.backgroundColor = 'rgba(50, 136, 189, 0.7)';
+
+
+  pointChart = new Chart(newCanvas.getContext('2d'), {
+    type: 'bar',
+    data: { labels, datasets: [datasetConf] },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: { duration: 0 },
+      scales: { x: { title: { display: true, text: 'Tag' }, ticks: { maxRotation: 0, autoSkip: true } }, y: { title: { display: true, text: paramConf.unit }, beginAtZero: currentParam === 'RR' } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => `${(ctx.raw ?? 0).toFixed(1)} ${paramConf.unit}` } } }
+    }
+  });
 }
-map.on('click', function(e){
-  var lat=e.latlng.lat, lon=e.latlng.lng;
-  if(clickMarker) map.removeLayer(clickMarker);
-  clickMarker=L.circleMarker([lat,lon],{radius:6,color:'#111',fillColor:'#4f46e5',fillOpacity:0.9}).addTo(map);
+
+map.on('click', async (e) => {
+  const { lat, lng } = e.latlng;
+  if (clickMarker) map.removeLayer(clickMarker);
+  clickMarker = L.circleMarker([lat, lng], { radius: 6, color: '#111', fillColor: '#4f46e5', fillOpacity: 0.9 }).addTo(map);
   toast('Lade Zeitreihe …');
-  fetchPointTimeseries(lat,lon,startEl.value,endEl.value).then(function(res){ openChart(lat,lon,res.timestamps,res.values); })
-  .catch(function(err){ console.error(err); alert("Zeitreihe fehlgeschlagen: "+(err && err.message? err.message: err)); });
+
+  const res = await fetchPointTimeseries(lat, lng, startEl.value, endEl.value);
+
+  if (res && res.error) {
+    Log.warn('timeseries:data-error', res.error);
+    let userMessage = "Zeitreihe fehlgeschlagen.";
+    if (res.error.includes("Keine Rasterzelle") || res.error.includes("Keine Werte")) {
+      userMessage = "Für diesen Punkt sind keine Daten verfügbar.";
+    }
+    toast(userMessage);
+  } else if (res) {
+    openChart(lat, lng, res.timestamps, res.values);
+  }
 });
 
-/* ======== Auto-Render ======== */
-window.addEventListener('load', function(){ setTimeout(function(){ renderOverlay({fit:true, silent:true}); }, 150); });
+/*
+* Modus-Umschaltung
+*/
+paramSelectEl.addEventListener('change', function () {
+    currentParam = this.value;
+    document.getElementById('paramHint').textContent = PARAMS[currentParam].hint;
+    renderOverlay({ fit: false });
+});
+
+/*
+ * Initialisierung beim Laden der Seite
+ */
+async function tryApplyOverlayBoundsJSON() {
+  try {
+    const r = await fetch('overlay_bounds.json', { cache: 'no-store' });
+    if (!r.ok) return;
+    const b = await r.json();
+    if (!(isFinite(b.south) && isFinite(b.west) && isFinite(b.north) && isFinite(b.east))) return;
+    document.getElementById('bbox').value = [b.south, b.west, b.north, b.east].join(',');
+    Log.info('overlay_bounds.json', JSON.stringify(b));
+    renderOverlay({ fit: true, silent: true });
+  } catch (e) { /* ignore */ }
+}
+
+window.addEventListener('load', () => {
+  setTimeout(() => { 
+    renderOverlay({ fit: true, silent: true }); 
+  }, 150);
+  tryApplyOverlayBoundsJSON();
+  updateUI();
+});
 </script>
 </body>
 </html>
+
